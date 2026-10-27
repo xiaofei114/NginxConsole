@@ -271,6 +271,7 @@ export async function loadConfig(env = process.env, overrides = {}) {
     systemdUnit: env.NCS_SYSTEMD_UNIT || 'nginx',
     useSudo: parseBoolean(env.NCS_USE_SUDO, false),
     certDir: env.NCS_CERT_DIR || 'ssl',
+    configFile: env.NCS_CONFIG_FILE || 'nginx.conf',
     enforceTest,
     sessionIdleMinutes: parseInteger(env.NCS_SESSION_IDLE_MINUTES, 'NCS_SESSION_IDLE_MINUTES', { min: 5, max: 1440, defaultValue: 60 }),
     sessionAbsoluteMinutes: parseInteger(env.NCS_SESSION_ABSOLUTE_MINUTES, 'NCS_SESSION_ABSOLUTE_MINUTES', { min: 15, max: 1440, defaultValue: 720 }),

@@ -159,7 +159,7 @@ export async function createApp(config, { logger } = {}) {
     workspace: initialWorkspace,
     nginxBin: config.nginxBin,
     nginxPrefix: config.nginxPrefix,
-    configFile: 'nginx.conf',
+    configFile: config.configFile || 'nginx.conf',
     controlMode: config.controlMode,
     systemdUnit: config.systemdUnit,
     useSudo: config.useSudo,
