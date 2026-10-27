@@ -289,7 +289,8 @@ async function runOperation(operation) {
   consoleOutput.value = `正在执行${target.label}…`;
   consoleTone.value = 'idle';
   try {
-    const data = await api.post(`/servers/${props.serverId}/${target.path}`, {});
+    const body = operation === 'restart' ? { confirm: true } : {};
+    const data = await api.post(`/servers/${props.serverId}/${target.path}`, body);
     const parts = [];
     if (data.testOutput) parts.push(data.testOutput);
     if (data.output) parts.push(data.output);
