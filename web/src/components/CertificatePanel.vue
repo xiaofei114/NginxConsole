@@ -311,6 +311,7 @@ function fileSize(text) {
                 <button
                   type="button"
                   :class="{ active: layout === 'directory' }"
+                  :aria-pressed="layout === 'directory'"
                   @click="layout = 'directory'"
                 >
                   目录（面板风格）
@@ -318,6 +319,7 @@ function fileSize(text) {
                 <button
                   type="button"
                   :class="{ active: layout === 'flat' }"
+                  :aria-pressed="layout === 'flat'"
                   @click="layout = 'flat'"
                 >
                   单文件
@@ -341,7 +343,7 @@ function fileSize(text) {
                 type="text"
                 maxlength="64"
                 spellcheck="false"
-                placeholder="example.com"
+                :placeholder="layout === 'directory' ? 'nginx.xiaofei.icu_nginx' : 'example.com'"
               />
               <span class="hint">
                 <template v-if="layout === 'directory'">

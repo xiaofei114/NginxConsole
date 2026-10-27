@@ -641,9 +641,17 @@ export class NginxEngine {
      * key lives next to it (key contents are never read).
      */
     const readDirectoryCertificate = async (dirName) => {
+      let directoryPath;
+      try {
+        directoryPath = await fs.realpath(path.join(certDir.realPath, dirName));
+      } catch {
+        return;
+      }
+      // Refuse junctions/symlinks that point outside the certificate directory.
+      if (!isInside(certDir.realPath, directoryPath)) return;
       let children = [];
       try {
-        children = await fs.readdir(path.join(certDir.realPath, dirName), { withFileTypes: true });
+        children = await fs.readdir(directoryPath, { withFileTypes: true });
       } catch {
         return;
       }

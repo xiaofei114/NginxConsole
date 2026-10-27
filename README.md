@@ -154,7 +154,7 @@ Agent 仅主动连接主服务器的 `/agent/ws`，不需要公网入站端口�
 
 上传时可选择**存放方式**：
 
-- **目录（默认）**：写入 `ssl/<name>/fullchain.pem`（叶证书 + 链）与 `ssl/<name>/privkey.pem`，兼容面板/宝塔式布局，填现有子目录名即可原地替换；
+- **目录（页面默认）**：写入 `ssl/<name>/fullchain.pem`（叶证书 + 链）与 `ssl/<name>/privkey.pem`，兼容面板/宝塔式布局，填现有子目录名即可原地替换；
 - **单文件**：写入 `ssl/<name>.crt`、`ssl/<name>.chain.pem`、`ssl/<name>.key`。
 
 压缩包在内存中解析，条目路径不会用于落盘，只提取 PEM 证书/私钥并按上述方式写入：
