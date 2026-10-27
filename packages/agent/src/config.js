@@ -117,6 +117,34 @@ function optionalString(value, name, maxLength = 512) {
   return value;
 }
 
+export function normalizeConfigFile(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256) {
+    throw new NcsError('INVALID_CONFIG_FILE', '配置文件路径无效', 400);
+  }
+  if (value.startsWith('/') || /^[A-Za-z]:/.test(value) || value.includes('\\') || value.split('/').includes('..')) {
+    throw new NcsError('INVALID_CONFIG_FILE', '配置文件必须是工作目录内的相对路径（使用 / 分隔）', 400);
+  }
+  return value;
+}
+
+/**
+ * Pick the main configuration inside a workspace.
+ * Windows zip/panel layouts keep it in `conf/nginx.conf`, POSIX packages in
+ * `nginx.conf`, so try both instead of assuming one.
+ */
+export async function detectConfigFile(workspace) {
+  if (!workspace) return 'nginx.conf';
+  for (const candidate of ['nginx.conf', 'conf/nginx.conf']) {
+    try {
+      const stat = await fs.stat(path.join(workspace, candidate));
+      if (stat.isFile()) return candidate;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return 'nginx.conf';
+}
+
 export async function loadAgentConfig(configPath) {
   const resolvedPath = path.resolve(configPath);
   await assertPrivateFile(resolvedPath, 'Agent 配置文件');
@@ -154,6 +182,9 @@ export async function loadAgentConfig(configPath) {
   if (nginxPrefix && !path.isAbsolute(nginxPrefix)) {
     throw new NcsError('INVALID_AGENT_CONFIG', 'nginxPrefix 必须是绝对路径', 500);
   }
+  const configFile = raw.configFile
+    ? normalizeConfigFile(raw.configFile)
+    : await detectConfigFile(workspace);
   return {
     version: 1,
     agentId: raw.agentId,
@@ -166,6 +197,7 @@ export async function loadAgentConfig(configPath) {
     workspace,
     nginxBin,
     nginxPrefix,
+    configFile,
     controlMode: raw.controlMode === 'systemd' ? 'systemd' : 'signal',
     systemdUnit: optionalString(raw.systemdUnit, 'systemdUnit', 128) || 'nginx',
     useSudo: Boolean(raw.useSudo),
@@ -190,6 +222,7 @@ export async function saveAgentConfig(configPath, config) {
     workspace: config.workspace || null,
     nginxBin: config.nginxBin,
     nginxPrefix: config.nginxPrefix || null,
+    configFile: config.configFile || 'nginx.conf',
     controlMode: config.controlMode || 'signal',
     systemdUnit: config.systemdUnit || 'nginx',
     useSudo: Boolean(config.useSudo),

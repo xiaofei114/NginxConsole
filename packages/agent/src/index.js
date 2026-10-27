@@ -34,6 +34,7 @@ enroll 选项:
   --workspace <PATH>         Nginx 工作目录（默认第一个 allowed-root）
   --nginx-bin <PATH>         nginx 可执行文件绝对路径（默认 /usr/sbin/nginx）
   --nginx-prefix <PATH>      nginx -p 前缀（可选）
+  --config-file <PATH>       工作目录内的主配置文件（默认自动识别 nginx.conf / conf/nginx.conf）
   --control-mode <MODE>      signal | systemd（默认 signal）
   --systemd-unit <UNIT>      systemd 单元名（默认 nginx）
   --use-sudo                 通过 sudo -n 执行重载/重启（需要精确 sudoers）
@@ -127,6 +128,7 @@ async function commandEnroll(flags) {
     workspace: stringFlag(flags, 'workspace'),
     nginxBin: stringFlag(flags, 'nginx-bin'),
     nginxPrefix: stringFlag(flags, 'nginx-prefix'),
+    configFile: stringFlag(flags, 'config-file'),
     controlMode: stringFlag(flags, 'control-mode', { defaultValue: 'signal' }),
     systemdUnit: stringFlag(flags, 'systemd-unit', { defaultValue: 'nginx' }),
     useSudo: boolFlag(flags, 'use-sudo'),
@@ -276,6 +278,7 @@ async function commandSetup(flags) {
       workspace,
       nginxBin,
       nginxPrefix,
+      configFile: stringFlag(flags, 'config-file'),
       controlMode,
       systemdUnit: stringFlag(flags, 'systemd-unit', { defaultValue: 'nginx' }),
       useSudo: boolFlag(flags, 'use-sudo'),
@@ -285,8 +288,9 @@ async function commandSetup(flags) {
       enforceTest: !boolFlag(flags, 'dev-allow-untested'),
     });
     log('注册成功，正在启动 Agent（Ctrl+C 退出）…');
-    log(`  配置文件: ${result.configPath}`);
+    log(`  Agent 配置: ${result.configPath}`);
     log(`  工作目录: ${result.config.workspace}`);
+    log(`  配置文件: ${result.config.configFile}`);
     log(`  nginx   : ${result.config.nginxBin}`);
   } finally {
     rl?.close();

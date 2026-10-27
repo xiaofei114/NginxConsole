@@ -67,6 +67,10 @@ export class NginxEngine {
     this.certDir = normalizeCertificateDirectory(rawConfig.certDir);
     this.configFileRel = normalizeRelativePath(rawConfig.configFile || CONFIG_FILE_DEFAULT, { allowEmpty: false });
     if (!this.configFileRel) throw new NcsError('INVALID_ENGINE_CONFIG', '配置文件路径无效', 500);
+    // When the caller did not pin the config file explicitly, fall back to the
+    // usual layouts (`nginx.conf` for POSIX packages, `conf/nginx.conf` for
+    // Windows/panel installs) instead of failing with "config not found".
+    this.autoDetectConfigFile = Boolean(rawConfig.autoDetectConfigFile);
     this.enforceTest = rawConfig.enforceTest !== false;
     this.label = typeof rawConfig.label === 'string' ? rawConfig.label.slice(0, 64) : '';
     this.onWorkspaceChange = typeof rawConfig.onWorkspaceChange === 'function' ? rawConfig.onWorkspaceChange : null;
@@ -123,11 +127,31 @@ export class NginxEngine {
     }
   }
 
+  configFileCandidates() {
+    if (!this.autoDetectConfigFile) return [this.configFileRel];
+    return [...new Set([this.configFileRel, 'nginx.conf', 'conf/nginx.conf'])];
+  }
+
+  async detectConfigFile() {
+    for (const candidate of this.configFileCandidates()) {
+      try {
+        const file = await resolveSafeFile(this.workspace, candidate, { mustExist: true });
+        if (file.stat.isFile()) {
+          this.configFileRel = candidate;
+          return;
+        }
+      } catch {
+        // Try the next known layout.
+      }
+    }
+  }
+
   async refreshConfigFileState() {
     if (!this.workspace) {
       this.configFileExists = false;
       return;
     }
+    if (this.autoDetectConfigFile) await this.detectConfigFile();
     try {
       const config = await resolveSafeFile(this.workspace, this.configFileRel, { mustExist: true });
       this.configFileExists = config.stat.isFile();
@@ -279,11 +303,16 @@ export class NginxEngine {
       }
       for (const candidate of candidates) {
         let hasConfig = false;
-        try {
-          const stat = await fs.stat(path.join(candidate.full, this.configFileRel));
-          hasConfig = stat.isFile();
-        } catch {
-          hasConfig = false;
+        for (const rel of this.configFileCandidates()) {
+          try {
+            const stat = await fs.stat(path.join(candidate.full, rel));
+            if (stat.isFile()) {
+              hasConfig = true;
+              break;
+            }
+          } catch {
+            // Try the next known layout.
+          }
         }
         workspaces.push({ path: candidate.full, name: candidate.name || path.basename(candidate.full), hasConfig });
       }

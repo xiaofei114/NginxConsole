@@ -214,7 +214,7 @@ Windows 上需要显式给出 `--nginx-bin C:/nginx/nginx.exe` 和 `--nginx-pref
 | `NCS_SYSTEMD_UNIT` | systemd 单元名，默认 `nginx` |
 | `NCS_USE_SUDO` | 使用 `sudo -n` 执行 Nginx 控制命令 |
 | `NCS_CERT_DIR` | 工作目录内证书子目录，默认 `ssl` |
-| `NCS_CONFIG_FILE` | 主配置文件相对工作目录的路径，默认 `nginx.conf`；Windows 官方包通常填 `conf/nginx.conf` |
+| `NCS_CONFIG_FILE` | 主配置文件相对工作目录的路径；不填时自动识别 `nginx.conf` 与 `conf/nginx.conf`（Windows 官方包即后者），填非常规路径则只认该路径 |
 | `NCS_SESSION_IDLE_MINUTES` / `NCS_SESSION_ABSOLUTE_MINUTES` | 会话空闲/绝对过期 |
 | `NCS_ENROLL_TOKEN_MINUTES` | Agent 注册令牌有效期 |
 | `NCS_TLS_CERT` / `NCS_TLS_KEY` | 可选：Node 直接监听 HTTPS |

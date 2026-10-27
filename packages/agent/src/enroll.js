@@ -10,7 +10,9 @@ import {
 } from '@ncs/shared';
 import {
   assertAgentId,
+  detectConfigFile,
   loadIdentity,
+  normalizeConfigFile,
   normalizeMainUrl,
   saveAgentConfig,
   keyPathForConfig,
@@ -79,6 +81,9 @@ export async function enrollAgent(options) {
   const allowedRoots = await resolveRoots(requestedRoots);
   const workspaceRequest = options.workspace || allowedRoots[0];
   const workspace = (await resolveWorkspace(allowedRoots, workspaceRequest)).path;
+  const configFile = options.configFile
+    ? normalizeConfigFile(options.configFile)
+    : await detectConfigFile(workspace);
 
   const nginxBin = options.nginxBin
     || (process.platform === 'win32' ? '' : '/usr/sbin/nginx');
@@ -160,6 +165,7 @@ export async function enrollAgent(options) {
     workspace,
     nginxBin: path.normalize(nginxBin),
     nginxPrefix: options.nginxPrefix || null,
+    configFile,
     controlMode: options.controlMode === 'systemd' ? 'systemd' : 'signal',
     systemdUnit: options.systemdUnit || 'nginx',
     useSudo: Boolean(options.useSudo),

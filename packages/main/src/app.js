@@ -160,6 +160,7 @@ export async function createApp(config, { logger } = {}) {
     nginxBin: config.nginxBin,
     nginxPrefix: config.nginxPrefix,
     configFile: config.configFile || 'nginx.conf',
+    autoDetectConfigFile: config.autoDetectConfigFile,
     controlMode: config.controlMode,
     systemdUnit: config.systemdUnit,
     useSudo: config.useSudo,

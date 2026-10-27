@@ -272,6 +272,9 @@ export async function loadConfig(env = process.env, overrides = {}) {
     useSudo: parseBoolean(env.NCS_USE_SUDO, false),
     certDir: env.NCS_CERT_DIR || 'ssl',
     configFile: env.NCS_CONFIG_FILE || 'nginx.conf',
+    // Only stick to the configured path when it is a non-standard one; the two
+    // common layouts are auto-detected so Windows installs do not need extra config.
+    autoDetectConfigFile: !env.NCS_CONFIG_FILE || ['nginx.conf', 'conf/nginx.conf'].includes(env.NCS_CONFIG_FILE),
     enforceTest,
     sessionIdleMinutes: parseInteger(env.NCS_SESSION_IDLE_MINUTES, 'NCS_SESSION_IDLE_MINUTES', { min: 5, max: 1440, defaultValue: 60 }),
     sessionAbsoluteMinutes: parseInteger(env.NCS_SESSION_ABSOLUTE_MINUTES, 'NCS_SESSION_ABSOLUTE_MINUTES', { min: 15, max: 1440, defaultValue: 720 }),

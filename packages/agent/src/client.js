@@ -66,7 +66,7 @@ export class AgentClient {
       workspace: config.workspace,
       nginxBin: config.nginxBin,
       nginxPrefix: config.nginxPrefix,
-      configFile: 'nginx.conf',
+      configFile: config.configFile,
       controlMode: config.controlMode,
       systemdUnit: config.systemdUnit,
       useSudo: config.useSudo,
