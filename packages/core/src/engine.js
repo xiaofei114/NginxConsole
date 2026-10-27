@@ -27,6 +27,7 @@ import { NginxController } from './nginx.js';
 const CONFIG_FILE_DEFAULT = 'nginx.conf';
 const HEX_HASH_RE = /^[a-f0-9]{64}$/;
 const CONTROL_MODES = new Set(['signal', 'systemd']);
+const CERT_LAYOUTS = new Set(['flat', 'directory']);
 
 function requireAbsolute(value, name) {
   if (typeof value !== 'string' || !path.isAbsolute(value)) {
@@ -596,37 +597,121 @@ export class NginxEngine {
     } catch {
       return { certDir: this.certDir, certificates: [], errors: [] };
     }
+
     const certificates = [];
     const errors = [];
+
+    const readCertificate = async (relativePath, name, extra) => {
+      const file = await resolveSafeFile(certDir.realPath, relativePath, { mustExist: true });
+      const buffer = await readFileLimited(file.absolutePath, LIMITS.maxCertificateBytes);
+      if (buffer.includes(0)) throw new Error('二进制文件');
+      const text = buffer.toString('utf8');
+      if (text.trim().length === 0) return null;
+      if (isPrivateKeyContent(text)) throw new NcsError('PRIVATE_KEY_IN_CERT', '包含私钥，已跳过', 400);
+      const inspected = inspectCertificatePem(text, { allowMultiple: true });
+      return {
+        file: displayRelativePath(this.workspace, file.absolutePath),
+        name,
+        subject: inspected.subject,
+        issuer: inspected.issuer,
+        san: inspected.san,
+        validFrom: inspected.validFrom,
+        validTo: inspected.validTo,
+        daysRemaining: inspected.daysRemaining,
+        expired: inspected.expired,
+        fingerprint256: inspected.fingerprint256,
+        chainCount: inspected.certificateCount - 1,
+        ...extra,
+      };
+    };
+
+    const fileExists = async (relativePath) => {
+      try {
+        const file = await resolveSafeFile(certDir.realPath, relativePath);
+        return file.existed;
+      } catch {
+        return false;
+      }
+    };
+
+    /**
+     * Panel-style layouts keep one certificate per subdirectory, e.g.
+     * ssl/<domain>/fullchain.pem + ssl/<domain>/privkey.pem. Read the best
+     * certificate candidate inside the directory and report whether a private
+     * key lives next to it (key contents are never read).
+     */
+    const readDirectoryCertificate = async (dirName) => {
+      let children = [];
+      try {
+        children = await fs.readdir(path.join(certDir.realPath, dirName), { withFileTypes: true });
+      } catch {
+        return;
+      }
+      const files = children
+        .filter((child) => child.isFile() && !child.name.startsWith('.'))
+        .map((child) => child.name);
+      if (files.length === 0) return;
+
+      const byLower = new Map(files.map((file) => [file.toLowerCase(), file]));
+      const keyPresent = files.some((file) => {
+        const lower = file.toLowerCase();
+        return lower.endsWith('.key') || lower === 'privkey.pem' || lower === 'private.pem';
+      });
+
+      const candidates = [];
+      for (const preferred of ['fullchain.pem', 'cert.pem', 'server.crt', 'server.pem']) {
+        const actual = byLower.get(preferred);
+        if (actual) candidates.push(actual);
+      }
+      for (const file of [...files].sort((a, b) => a.localeCompare(b))) {
+        const lower = file.toLowerCase();
+        if (!['.crt', '.cer', '.pem'].includes(path.extname(lower))) continue;
+        if (['privkey.pem', 'private.pem', 'key.pem'].includes(lower)) continue;
+        if (!candidates.includes(file)) candidates.push(file);
+      }
+
+      let lastError = null;
+      for (const candidate of candidates.slice(0, 5)) {
+        try {
+          const certificate = await readCertificate(`${dirName}/${candidate}`, dirName, {
+            directory: true,
+            keyPresent,
+          });
+          if (certificate) {
+            certificates.push(certificate);
+            return;
+          }
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (lastError) {
+        errors.push({
+          file: path.posix.join(this.certDir, dirName),
+          error: lastError instanceof NcsError ? lastError.message : '证书解析失败',
+        });
+      }
+    };
+
+    let directoryCount = 0;
     for (const entry of entries.slice(0, 300)) {
+      if (entry.name.startsWith('.')) continue;
+      if (entry.isDirectory()) {
+        if (directoryCount >= 100) continue;
+        directoryCount += 1;
+        await readDirectoryCertificate(entry.name);
+        continue;
+      }
       const lower = entry.name.toLowerCase();
       if (!['.crt', '.cer', '.pem'].includes(path.extname(lower))) continue;
       if (lower.endsWith('.key')) continue;
-      if (entry.isDirectory()) continue;
       try {
-        const file = await resolveSafeFile(certDir.realPath, entry.name, { mustExist: true });
-        const buffer = await readFileLimited(file.absolutePath, LIMITS.maxCertificateBytes);
-        if (buffer.includes(0)) throw new Error('二进制文件');
-        const text = buffer.toString('utf8');
-        if (text.trim().length === 0) continue;
-        if (isPrivateKeyContent(text)) {
-          errors.push({ file: displayRelativePath(this.workspace, file.absolutePath), error: '包含私钥，已跳过' });
-          continue;
-        }
-        const inspected = inspectCertificatePem(text, { allowMultiple: true });
-        certificates.push({
-          file: displayRelativePath(this.workspace, file.absolutePath),
-          name: entry.name,
-          subject: inspected.subject,
-          issuer: inspected.issuer,
-          san: inspected.san,
-          validFrom: inspected.validFrom,
-          validTo: inspected.validTo,
-          daysRemaining: inspected.daysRemaining,
-          expired: inspected.expired,
-          fingerprint256: inspected.fingerprint256,
-          chainCount: inspected.certificateCount - 1,
+        const base = entry.name.replace(/\.(crt|cer|pem)$/i, '').replace(/\.chain$/i, '');
+        const certificate = await readCertificate(entry.name, entry.name, {
+          directory: false,
+          keyPresent: await fileExists(`${base}.key`),
         });
+        if (certificate) certificates.push(certificate);
       } catch (error) {
         errors.push({
           file: path.posix.join(certDir.relativePath, entry.name),
@@ -634,12 +719,17 @@ export class NginxEngine {
         });
       }
     }
+
     certificates.sort((a, b) => String(a.validTo).localeCompare(String(b.validTo)));
     return { certDir: this.certDir, certificates, errors };
   }
 
   async uploadCertificate(payload) {
     const name = assertSafeCertificateName(payload.name);
+    const layout = payload.layout ?? 'flat';
+    if (!CERT_LAYOUTS.has(layout)) {
+      throw new NcsError('INVALID_CERT_LAYOUT', '证书存放方式无效', 400);
+    }
     const bundle = validateCertificateBundle({
       certPem: payload.certPem,
       chainPem: payload.chainPem || '',
@@ -649,26 +739,45 @@ export class NginxEngine {
     return this.runExclusive(async () => {
       this.requireWorkspace();
       const certDirectory = await this.ensureDirectoryInside(this.certDir);
-      const targets = [
-        {
-          relPath: path.posix.join(this.certDir, `${name}.crt`),
-          content: Buffer.from(bundle.certPem, 'utf8'),
-          mode: 0o644,
-          kind: 'certificate',
-        },
-        {
-          relPath: path.posix.join(this.certDir, `${name}.chain.pem`),
-          content: Buffer.from(bundle.chainPem, 'utf8'),
-          mode: 0o644,
-          kind: 'chain',
-        },
-        {
-          relPath: path.posix.join(this.certDir, `${name}.key`),
-          content: Buffer.from(bundle.keyPem, 'utf8'),
-          mode: 0o600,
-          kind: 'privateKey',
-        },
-      ];
+      const targets = layout === 'directory'
+        ? [
+            {
+              relPath: path.posix.join(this.certDir, name, 'fullchain.pem'),
+              content: Buffer.from(`${bundle.certPem}${bundle.chainPem}`, 'utf8'),
+              mode: 0o644,
+              kind: 'certificate',
+            },
+            {
+              relPath: path.posix.join(this.certDir, name, 'privkey.pem'),
+              content: Buffer.from(bundle.keyPem, 'utf8'),
+              mode: 0o600,
+              kind: 'privateKey',
+            },
+          ]
+        : [
+            {
+              relPath: path.posix.join(this.certDir, `${name}.crt`),
+              content: Buffer.from(bundle.certPem, 'utf8'),
+              mode: 0o644,
+              kind: 'certificate',
+            },
+            {
+              relPath: path.posix.join(this.certDir, `${name}.chain.pem`),
+              content: Buffer.from(bundle.chainPem, 'utf8'),
+              mode: 0o644,
+              kind: 'chain',
+            },
+            {
+              relPath: path.posix.join(this.certDir, `${name}.key`),
+              content: Buffer.from(bundle.keyPem, 'utf8'),
+              mode: 0o600,
+              kind: 'privateKey',
+            },
+          ];
+
+      if (layout === 'directory') {
+        await this.ensureDirectoryInside(path.posix.join(this.certDir, name));
+      }
 
       const states = [];
       for (const target of targets) {
@@ -730,6 +839,7 @@ export class NginxEngine {
 
       return {
         name,
+        layout,
         files: states.map((state) => ({
           path: state.relPath,
           kind: state.kind,
@@ -751,6 +861,7 @@ export class NginxEngine {
       certPem: archive.certPem,
       chainPem: archive.chainPem,
       keyPem: archive.keyPem,
+      layout: payload.layout,
     });
     return {
       ...result,

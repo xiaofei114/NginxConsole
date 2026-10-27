@@ -514,8 +514,9 @@ export async function createApp(config, { logger } = {}) {
     const certPem = stringField(body, 'certPem', { max: LIMITS.maxCertificateBytes });
     const chainPem = optionalString(body, 'chainPem', LIMITS.maxCertificateBytes) || '';
     const keyPem = stringField(body, 'keyPem', { max: LIMITS.maxCertificateBytes });
+    const layout = optionalString(body, 'layout', 16) || 'flat';
     const data = await withAudit(req, { action: 'server.cert.upload', serverId, target: name }, () =>
-      manager.execute(serverId, 'cert.upload', { name, certPem, chainPem, keyPem }));
+      manager.execute(serverId, 'cert.upload', { name, certPem, chainPem, keyPem, layout }));
     sendOk(res, data);
   }));
 
@@ -525,10 +526,11 @@ export async function createApp(config, { logger } = {}) {
     const name = stringField(body, 'name', { max: 64 });
     const filename = optionalString(body, 'filename', 255) || '';
     const archiveBase64 = stringField(body, 'archiveBase64', { max: LIMITS.maxArchiveBase64Chars });
+    const layout = optionalString(body, 'layout', 16) || 'flat';
     const data = await withAudit(
       req,
       { action: 'server.cert.upload', serverId, target: name, meta: { source: 'archive', filename } },
-      () => manager.execute(serverId, 'cert.uploadArchive', { name, archiveBase64 }),
+      () => manager.execute(serverId, 'cert.uploadArchive', { name, archiveBase64, layout }),
     );
     sendOk(res, data);
   }));

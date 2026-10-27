@@ -230,4 +230,59 @@ test('NginxEngine enforces workspace sandbox, optimistic locking and backups', a
       hasCode('ARCHIVE_INVALID'),
     );
   });
+
+  await t.test('lists certificates kept in panel-style subdirectories', async () => {
+    const certPem = await fixture('valid/cert.pem');
+    const keyPem = await fixture('valid/key.pem');
+    const panelDir = path.join(root, 'ssl', 'panel.example_nginx');
+    await fs.mkdir(panelDir, { recursive: true });
+    await fs.writeFile(path.join(panelDir, 'fullchain.pem'), certPem);
+    await fs.writeFile(path.join(panelDir, 'privkey.pem'), keyPem);
+    await fs.mkdir(path.join(root, 'ssl', 'empty.example'), { recursive: true });
+
+    const listing = await engine.listCertificates();
+    const entry = listing.certificates.find((item) => item.name === 'panel.example_nginx');
+    assert.ok(entry, 'subdirectory certificate should be listed');
+    assert.equal(entry.directory, true);
+    assert.equal(entry.keyPresent, true);
+    assert.equal(entry.file, 'ssl/panel.example_nginx/fullchain.pem');
+    assert.ok(!JSON.stringify(entry).includes('PRIVATE KEY'));
+
+    const flat = listing.certificates.find((item) => item.name === 'example.com.crt');
+    assert.equal(flat.directory, false);
+    assert.equal(flat.keyPresent, true);
+    assert.ok(!listing.errors.some((item) => item.file.includes('empty.example')));
+  });
+
+  await t.test('uploads certificates into panel-style directories', async () => {
+    const certPem = await fixture('valid/cert.pem');
+    const keyPem = await fixture('valid/key.pem');
+    const payload = { name: 'panel2.example_nginx', certPem, keyPem, layout: 'directory' };
+
+    await assert.rejects(
+      engine.uploadCertificate({ ...payload, layout: 'weird' }),
+      hasCode('INVALID_CERT_LAYOUT'),
+    );
+
+    const result = await engine.uploadCertificate(payload);
+    assert.equal(result.layout, 'directory');
+    assert.deepEqual(result.files.map((file) => file.path), [
+      'ssl/panel2.example_nginx/fullchain.pem',
+      'ssl/panel2.example_nginx/privkey.pem',
+    ]);
+    const fullchain = await fs.readFile(path.join(root, 'ssl', 'panel2.example_nginx', 'fullchain.pem'), 'utf8');
+    assert.match(fullchain, /BEGIN CERTIFICATE/);
+    assert.ok(!fullchain.includes('PRIVATE KEY'));
+    const keyFile = result.files.find((file) => file.kind === 'privateKey');
+    assert.equal(keyFile.mode, '0600');
+
+    const overwritten = await engine.uploadCertificate(payload);
+    assert.ok(overwritten.files.every((file) => /^[0-9a-f-]{36}$/.test(file.backupId)));
+
+    const listing = await engine.listCertificates();
+    const entry = listing.certificates.find((item) => item.name === 'panel2.example_nginx');
+    assert.equal(entry.directory, true);
+    assert.equal(entry.keyPresent, true);
+    assert.equal(entry.file, 'ssl/panel2.example_nginx/fullchain.pem');
+  });
 });

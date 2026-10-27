@@ -1,3 +1,7 @@
 packages:
   - 'packages/*'
   - 'web'
+
+# 让 pnpm 把 packages/* 与 web 之间用 "*" 声明的依赖解析为本地工作区包，
+# 而不是去 npm registry 下载（npm 的 workspaces 行为与之相同）。
+linkWorkspacePackages: true

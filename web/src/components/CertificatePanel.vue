@@ -20,6 +20,7 @@ const certErrors = ref([]);
 const selected = ref(null);
 
 const form = reactive({ name: '', certPem: '', chainPem: '', keyPem: '' });
+const layout = ref('directory');
 const uploading = ref(false);
 const uploadError = ref('');
 const uploadResult = ref(null);
@@ -39,6 +40,13 @@ const CERT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const snippet = computed(() => {
   const result = uploadResult.value;
   const name = result?.name || form.name || '<name>';
+  const mode = result?.layout || layout.value;
+  if (mode === 'directory') {
+    return [
+      `ssl_certificate     ${certDir.value}/${name}/fullchain.pem;`,
+      `ssl_certificate_key ${certDir.value}/${name}/privkey.pem;`,
+    ].join('\n');
+  }
   return [
     `ssl_certificate     ${certDir.value}/${name}.crt;`,
     `ssl_certificate_key ${certDir.value}/${name}.key;`,
@@ -86,6 +94,7 @@ function resetForm() {
   form.certPem = '';
   form.chainPem = '';
   form.keyPem = '';
+  layout.value = 'directory';
   uploadError.value = '';
   uploadResult.value = null;
   showPaste.value = false;
@@ -187,6 +196,7 @@ async function submitArchive() {
       name,
       filename: archiveFile.value.name,
       archiveBase64,
+      layout: layout.value,
     });
     uploadResult.value = data;
     toast.success('压缩包已解析，证书已通过校验并写入');
@@ -210,8 +220,8 @@ async function submitArchive() {
 }
 
 function pickExisting(cert) {
-  const base = cert.name.replace(/\.(crt|cer|pem)$/i, '').replace(/\.chain$/i, '');
-  form.name = base;
+  form.name = cert.directory ? cert.name : cert.name.replace(/\.(crt|cer|pem)$/i, '').replace(/\.chain$/i, '');
+  layout.value = cert.directory ? 'directory' : 'flat';
   selected.value = cert.file;
   uploadError.value = '';
 }
@@ -244,6 +254,7 @@ async function submitUpload() {
       certPem: form.certPem,
       chainPem: form.chainPem,
       keyPem: form.keyPem,
+      layout: layout.value,
     });
     uploadResult.value = data;
     form.keyPem = '';
@@ -295,6 +306,34 @@ function fileSize(text) {
             </div>
 
             <div class="field">
+              <label>存放方式</label>
+              <div class="layout-switch">
+                <button
+                  type="button"
+                  :class="{ active: layout === 'directory' }"
+                  @click="layout = 'directory'"
+                >
+                  目录（面板风格）
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: layout === 'flat' }"
+                  @click="layout = 'flat'"
+                >
+                  单文件
+                </button>
+              </div>
+              <span class="hint">
+                <template v-if="layout === 'directory'">
+                  写入 {{ certDir }}/{{ form.name || 'example.com' }}/fullchain.pem 与 privkey.pem，可直接替换现有子目录证书
+                </template>
+                <template v-else>
+                  写入 {{ certDir }}/{{ form.name || 'example.com' }}.crt / .chain.pem / .key
+                </template>
+              </span>
+            </div>
+
+            <div class="field">
               <label for="cert-name">证书名称</label>
               <input
                 id="cert-name"
@@ -304,7 +343,14 @@ function fileSize(text) {
                 spellcheck="false"
                 placeholder="example.com"
               />
-              <span class="hint">将写入 {{ certDir }}/{{ form.name || 'example.com' }}.crt / .chain.pem / .key</span>
+              <span class="hint">
+                <template v-if="layout === 'directory'">
+                  填现有子目录名（如 nginx.xiaofei.icu_nginx），即可覆盖其中的 fullchain.pem 与 privkey.pem。
+                </template>
+                <template v-else>
+                  例如 example.com，将生成 example.com.crt / .chain.pem / .key。
+                </template>
+              </span>
             </div>
 
             <div class="archive-box">
@@ -456,7 +502,7 @@ function fileSize(text) {
             </div>
             <div v-else-if="certificates.length === 0" class="empty">
               <span class="empty-icon"><AppIcon name="key" :size="28" /></span>
-              工作目录 {{ certDir }}/ 中暂未发现证书
+              工作目录 {{ certDir }}/ 中暂未发现证书（支持证书文件，以及域名子目录内的 fullchain.pem / cert.pem）
             </div>
             <div v-else class="cert-items">
               <article
@@ -475,13 +521,26 @@ function fileSize(text) {
                 <div class="san-row">
                   <span v-for="name in sanPreview(cert.san)" :key="name" class="san-chip mono">{{ name }}</span>
                   <span v-if="cert.chainCount > 0" class="san-chip chain">链 {{ cert.chainCount }}</span>
+                  <span v-if="cert.directory" class="san-chip chain" title="证书位于子目录中">目录</span>
+                  <span
+                    class="san-chip"
+                    :class="cert.keyPresent ? 'chain' : 'missing'"
+                    :title="cert.keyPresent ? '同目录内存在私钥文件' : '未找到配套私钥文件'"
+                  >
+                    {{ cert.keyPresent ? '含私钥' : '缺私钥' }}
+                  </span>
                 </div>
                 <div class="cert-foot">
                   <span class="small muted">至 {{ formatTime(cert.validTo) }}</span>
-                  <button class="btn btn-sm btn-ghost" type="button" @click="pickExisting(cert)">
-                    替换
-                    <AppIcon name="chevronRight" :size="12" />
-                  </button>
+                  <div class="cert-actions">
+                    <button class="icon-button" type="button" aria-label="复制证书路径" @click="copy(cert.file)">
+                      <AppIcon name="copy" :size="13" />
+                    </button>
+                    <button class="btn btn-sm btn-ghost" type="button" @click="pickExisting(cert)">
+                      替换
+                      <AppIcon name="chevronRight" :size="12" />
+                    </button>
+                  </div>
                 </div>
               </article>
             </div>
@@ -521,6 +580,21 @@ function fileSize(text) {
 }
 .security-note svg { color: var(--accent-bright); flex: none; margin-top: 1px; }
 .file-field { display: flex; flex-direction: column; gap: 6px; }
+.layout-switch { display: flex; gap: 6px; }
+.layout-switch button {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--inset-bg);
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.layout-switch button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+}
 .file-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .file-field-head label { font-size: 12px; font-weight: 600; color: var(--text-soft); }
 .link-button { align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--info-text); font-size: 11.5px; }
@@ -567,7 +641,9 @@ function fileSize(text) {
 .san-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
 .san-chip { font-size: 9.5px; color: var(--ok-text); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 4px; padding: 1px 5px; }
 .san-chip.chain { color: var(--info-text); background: var(--info-soft); border-color: var(--info-border); }
+.san-chip.missing { color: var(--warn-text); background: var(--warn-soft); border-color: var(--warn-border); }
 .cert-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); }
+.cert-actions { display: flex; align-items: center; gap: 4px; }
 .cert-errors { margin-top: 10px; padding: 9px; border-radius: 8px; border: 1px solid var(--warn-border); background: var(--warn-soft); }
 .cert-error-row { display: flex; flex-direction: column; gap: 1px; margin-top: 6px; font-size: 10px; color: var(--warn-text); word-break: break-all; }
 
