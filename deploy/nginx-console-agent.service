@@ -1,0 +1,55 @@
+# Nginx Console — 子服务器 Agent systemd 单元
+#
+# 安装位置建议：/etc/systemd/system/nginx-console-agent.service
+# 配置文件：/etc/nginx-console/agent.env（权限 0600）
+#
+# Agent 只主动出站连接主服务器，不需要开放任何入站端口。
+# Agent 需要写 Nginx 配置目录与自己的配置目录，因此以专用用户运行，
+# 并通过 ReadWritePaths 精确授权。
+
+[Unit]
+Description=Nginx Console Agent
+Documentation=file:/opt/nginx-console/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nginx-console-agent
+Group=nginx
+WorkingDirectory=/opt/nginx-console
+EnvironmentFile=/etc/nginx-console/agent.env
+ExecStart=/usr/bin/node /opt/nginx-console/packages/agent/src/index.js run --config /etc/nginx-console/agent.json
+Restart=always
+RestartSec=5
+
+# 权限与沙箱
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+UMask=0077
+
+# 精确授权可写路径：
+# - Agent 配置、私钥、状态目录
+# - 被管理的 Nginx 工作目录（示例为 /etc/nginx；按实际调整）
+ReadWritePaths=/etc/nginx-console /etc/nginx
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

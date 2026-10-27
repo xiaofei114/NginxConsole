@@ -1,0 +1,13 @@
+{
+  "name": "@ncs/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Nginx management engine (filesystem sandbox, config test, certificates)",
+  "dependencies": {
+    "@ncs/shared": "*"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  }
+}

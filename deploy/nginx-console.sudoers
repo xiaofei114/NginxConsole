@@ -1,0 +1,33 @@
+# Nginx Console — 精确 sudo 规则示例
+#
+# 安装位置：/etc/sudoers.d/nginx-console-agent
+# 权限必须为 0440，属主 root:root；使用 visudo -c 校验。
+#
+# 仅在 Agent 无法直接以足够权限操作 Nginx 时使用：
+#   1. Agent 服务用户属于 nginx 组且 /etc/nginx 可写；或
+#   2. 通过 sudo 执行固定的 nginx / systemctl 命令。
+#
+# 重要：
+# - 规则中的路径、参数、工作目录必须与 Agent 配置完全一致。
+# - 不要使用通配符 allow-all；不要允许 nginx -c 指向任意未受控目录。
+# - NCS_NGINX_PREFIX / NCS_CONTROL_MODE / NCS_SYSTEMD_UNIT 改变时同步修改。
+#
+# 下面假设：
+#   Agent 用户：nginx-console-agent
+#   nginx：/usr/sbin/nginx
+#   配置：/etc/nginx/nginx.conf
+#   控制：signal 模式（nginx -s reload/stop + 启动）
+
+Defaults:nginx-console-agent !requiretty
+
+nginx-console-agent ALL=(root) NOPASSWD: /usr/sbin/nginx -t -c /etc/nginx/nginx.conf
+nginx-console-agent ALL=(root) NOPASSWD: /usr/sbin/nginx -s reload -c /etc/nginx/nginx.conf
+nginx-console-agent ALL=(root) NOPASSWD: /usr/sbin/nginx -s stop -c /etc/nginx/nginx.conf
+nginx-console-agent ALL=(root) NOPASSWD: /usr/sbin/nginx -c /etc/nginx/nginx.conf
+
+# 如果使用 systemd 控制方式，改为（并设置 NCS_CONTROL_MODE=systemd）：
+# nginx-console-agent ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
+# nginx-console-agent ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx
+
+# 如果配置了 NCS_NGINX_PREFIX，需要把 -p <prefix> 加入对应规则，例如：
+# nginx-console-agent ALL=(root) NOPASSWD: /usr/sbin/nginx -p /opt/nginx -t -c /etc/nginx/nginx.conf

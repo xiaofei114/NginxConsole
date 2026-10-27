@@ -1,0 +1,32 @@
+{
+  "name": "nginx-console",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-server Nginx configuration and TLS certificate management console",
+  "workspaces": [
+    "packages/*",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env packages/main/src/index.js",
+    "dev:web": "npm run dev -w @ncs/web",
+    "build": "npm run build -w @ncs/web",
+    "agent": "node packages/agent/src/index.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs --only ncs-main",
+    "pm2:start:agent": "pm2 start ecosystem.config.cjs --only ncs-agent",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:delete": "pm2 delete ecosystem.config.cjs",
+    "pm2:status": "pm2 status",
+    "pm2:logs": "pm2 logs",
+    "pm2:save": "pm2 save",
+    "test": "node --test \"packages/shared/test/*.test.js\" \"packages/core/test/*.test.js\" \"packages/main/test/*.test.js\"",
+    "test:shared": "node --test \"packages/shared/test/*.test.js\"",
+    "test:core": "node --test \"packages/core/test/*.test.js\"",
+    "test:main": "node --test \"packages/main/test/*.test.js\""
+  }
+}

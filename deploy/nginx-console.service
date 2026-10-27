@@ -1,0 +1,59 @@
+# Nginx Console — 主服务器 systemd 单元
+#
+# 安装位置建议：/etc/systemd/system/nginx-console.service
+# 配置文件：/etc/nginx-console/main.env（权限 0600，root:root）
+#
+# 该单元按最小权限运行。若主服务器还要直接管理本机系统 Nginx
+#（/etc/nginx），需要额外授权：
+#   1. 将 /etc/nginx 中需要修改的目录/文件授予组可写，或
+#   2. 使用 deploy/nginx-console.sudoers 中的精确 sudo 规则，
+#      并在 main.env 中设置 NCS_USE_SUDO=1。
+# 不要把本服务无条件以 root 运行。
+
+[Unit]
+Description=Nginx Console Main Server
+Documentation=file:/opt/nginx-console/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nginx-console
+Group=nginx-console
+WorkingDirectory=/opt/nginx-console
+EnvironmentFile=/etc/nginx-console/main.env
+ExecStart=/usr/bin/node --env-file-if-exists=.env packages/main/src/index.js
+Restart=on-failure
+RestartSec=3
+
+# 权限与沙箱
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+UMask=0077
+
+# 需要可写的路径：
+# - 数据目录：存储、审计、备份、主服务器密钥
+# - 若管理本机 Nginx，再追加 /etc/nginx（并确认属主/权限允许）
+ReadWritePaths=/var/lib/nginx-console
+
+# 日志（可选）：直接写入 journald
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

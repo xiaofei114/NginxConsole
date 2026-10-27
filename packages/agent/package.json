@@ -1,0 +1,20 @@
+{
+  "name": "@ncs/agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Outbound-only agent for Nginx Console",
+  "bin": {
+    "ncs-agent": "./src/index.js"
+  },
+  "dependencies": {
+    "@ncs/core": "*",
+    "@ncs/shared": "*",
+    "ws": "^8.18.0"
+  },
+  "exports": {
+    ".": "./src/client.js",
+    "./enroll": "./src/enroll.js",
+    "./config": "./src/config.js"
+  }
+}

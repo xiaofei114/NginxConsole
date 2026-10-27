@@ -1,0 +1,10 @@
+{
+  "name": "@ncs/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared security primitives for Nginx Console",
+  "exports": {
+    ".": "./src/index.js"
+  }
+}

@@ -1,0 +1,63 @@
+# ===========================================================================
+# Nginx Console — Git 忽略清单
+# 目标：密钥、口令哈希、审计日志、构建产物一律不进仓库。
+# ===========================================================================
+
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+web/dist/
+packages/*/dist/
+.vite/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+tmp/
+test/.tmp/
+
+# ---- 环境变量文件（保留示例文件） ----
+.env
+.env.*
+!.env.example
+*.local
+
+# ---- 运行时数据（含管理员口令哈希、TOTP 密钥、审计、备份） ----
+data/
+# 主服务器密钥：master.key 用于加密 TOTP，main-key.pem 是主服务器身份私钥
+master.key
+main-key.pem
+store.json
+store.json.tmp
+audit.jsonl
+audit.jsonl.*
+# 首次启动时自动生成的初始口令文件（登录后应删除）
+initial-admin-password.txt
+
+# ---- 证书与私钥（测试夹具除外） ----
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+!**/test/fixtures/**
+
+# ---- 日志与进程管理 ----
+*.log
+*.log.*
+logs/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pm2/
+
+# ---- 编辑器与操作系统 ----
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 本地私有 npm 配置（可能含 registry token） ----
+.npmrc
