@@ -16,6 +16,7 @@
     "dev:web": "npm run dev -w @ncs/web",
     "build": "npm run build -w @ncs/web",
     "agent": "node packages/agent/src/index.js",
+    "agent:setup": "node packages/agent/src/index.js setup",
     "pm2:start": "pm2 start ecosystem.config.cjs --only ncs-main",
     "pm2:start:agent": "pm2 start ecosystem.config.cjs --only ncs-agent",
     "pm2:restart": "pm2 restart ecosystem.config.cjs",

@@ -11,7 +11,7 @@ const props = defineProps({
   serverId: { type: String, required: true },
   info: { type: Object, default: null },
 });
-const emit = defineEmits(['pick-workspace']);
+const emit = defineEmits(['pick-workspace', 'refresh-info']);
 
 const dirPath = ref('');
 const entries = ref([]);
@@ -49,6 +49,16 @@ const restoring = ref(false);
 const restartOpen = ref(false);
 
 const workspace = computed(() => props.info?.workspace || '');
+const runtimeState = computed(() => {
+  const status = props.info?.nginxStatus;
+  if (!status || status.running === null || status.running === undefined) {
+    return { tone: 'unknown', label: '状态未知' };
+  }
+  if (status.running) {
+    return { tone: 'ok', label: status.pid ? `运行中 · PID ${status.pid}` : '运行中' };
+  }
+  return { tone: 'off', label: '未运行' };
+});
 const dirty = computed(() => Boolean(activeFile.value) && activeFile.value.content !== activeFile.value.original);
 const lineCount = computed(() => (activeFile.value ? activeFile.value.content.split('\n').length : 0));
 const gutterText = computed(() => {
@@ -309,6 +319,7 @@ async function runOperation(operation) {
     toast.error(`${target.label}失败：${caught.message || ''}`);
   } finally {
     busyOp.value = '';
+    emit('refresh-info');
   }
 }
 
@@ -401,6 +412,9 @@ function entryTitle(entry) {
         <div class="toolbar-path">
           <span class="small muted">工作目录</span>
           <span class="mono path-text" :title="workspace">{{ workspace }}</span>
+          <span class="run-state" :class="runtimeState.tone" :title="props.info?.nginxStatus?.pidFile || ''">
+            <span class="dot" />{{ runtimeState.label }}
+          </span>
         </div>
         <div class="toolbar-actions">
           <button class="btn btn-sm" type="button" :disabled="Boolean(busyOp)" @click="emit('pick-workspace')">
@@ -688,6 +702,21 @@ function entryTitle(entry) {
 }
 .toolbar-path { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .path-text { font-size: 12px; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-state {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--inset-bg);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.run-state .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.run-state.ok { color: var(--ok-text); border-color: var(--accent-border); background: var(--accent-soft); }
 .toolbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .editor-shell {
   display: grid;

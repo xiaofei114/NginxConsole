@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { NcsError } from '@ncs/shared';
 import { sanitizeCommandOutput } from './fs-utils.js';
 
@@ -190,8 +191,93 @@ export class NginxController {
     return { output: result.output, exitCode: 0, configPath };
   }
 
+  /**
+   * Resolve the pid file used by this nginx instance.
+   * Prefers the `pid` directive in nginx.conf and falls back to
+   * `<prefix>/logs/nginx.pid`, which is nginx's own default.
+   */
+  async pidFile(configPath) {
+    const base = this.nginxPrefix || path.dirname(this.nginxBin);
+    let pidPath = path.join(base, 'logs', 'nginx.pid');
+    try {
+      const text = await fs.readFile(configPath, 'utf8');
+      const source = text
+        .split('\n')
+        .map((line) => line.replace(/#.*$/, ''))
+        .join('\n');
+      const match = source.match(/(?:^|\n)\s*pid\s+([^;]+);/);
+      if (match) {
+        const value = match[1].trim().replace(/^["']|["']$/g, '');
+        if (value) pidPath = path.isAbsolute(value) ? value : path.resolve(base, value);
+      }
+    } catch {
+      // Keep the default location when the configuration cannot be read.
+    }
+    return pidPath;
+  }
+
+  /**
+   * Report whether this nginx instance is running.
+   * `running: null` means the state cannot be determined (e.g. pid file is
+   * unreadable), so callers must not assume the process is stopped.
+   */
+  async status(configPath) {
+    if (this.controlMode === 'systemd') {
+      try {
+        const result = await this.runSystemctl('is-active', { timeoutMs: 5000 });
+        return {
+          running: String(result.output || '').trim() === 'active',
+          pid: null,
+          pidFile: null,
+          unit: this.systemdUnit,
+        };
+      } catch {
+        return { running: null, pid: null, pidFile: null, unit: this.systemdUnit };
+      }
+    }
+    if (!configPath) return { running: null, pid: null, pidFile: null };
+    const pidFile = await this.pidFile(configPath);
+    let raw;
+    try {
+      raw = await fs.readFile(pidFile, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { running: false, pid: null, pidFile };
+      return { running: null, pid: null, pidFile };
+    }
+    const pid = Number.parseInt(String(raw).trim(), 10);
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      return { running: false, pid: null, pidFile };
+    }
+    try {
+      process.kill(pid, 0);
+      return { running: true, pid, pidFile };
+    } catch (error) {
+      if (error?.code === 'EPERM') return { running: true, pid, pidFile };
+      return { running: false, pid: null, pidFile, stalePid: pid };
+    }
+  }
+
+  async waitForState(configPath, expectedRunning, timeoutMs = 10000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const state = await this.status(configPath);
+      if (state.running === expectedRunning || state.running === null) return state;
+      if (Date.now() >= deadline) return state;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+
   async reload(configPath) {
     const test = await this.test(configPath);
+    if (this.controlMode !== 'systemd') {
+      const state = await this.status(configPath);
+      if (state.running === false) {
+        throw new NcsError('NGINX_NOT_RUNNING', 'Nginx 未运行，无法平滑重载，请使用「完全重启」启动', 409, {
+          pidFile: state.pidFile,
+          testOutput: test.output,
+        });
+      }
+    }
     let result;
     if (this.controlMode === 'systemd') {
       result = await this.runSystemctl('reload', { timeoutMs: 30000 });
@@ -231,18 +317,34 @@ export class NginxController {
       };
     }
 
-    // Signal mode: stop the running master, then start it again with the tested config.
-    const stop = await this.runNginx([...this.prefixArgs(), '-s', 'stop', '-c', configPath], {
-      timeoutMs: 15000,
-      privileged: true,
-    });
-    if (stop.exitCode !== 0) {
-      throw new NcsError('NGINX_STOP_FAILED', '停止 Nginx 失败，已中止重启（未执行启动）', 500, {
-        output: stop.output || `退出码 ${stop.exitCode}`,
-        testOutput: test.output,
+    // Signal mode: stop the running master (if any), then start with the tested config.
+    const initial = await this.status(configPath);
+    let stopOutput = '';
+    let stopped = false;
+    if (initial.running === false) {
+      stopOutput = 'Nginx 未运行，跳过停止，直接启动。';
+    } else {
+      const stop = await this.runNginx([...this.prefixArgs(), '-s', 'stop', '-c', configPath], {
+        timeoutMs: 15000,
+        privileged: true,
       });
+      if (stop.exitCode !== 0) {
+        throw new NcsError('NGINX_STOP_FAILED', '停止 Nginx 失败，已中止重启（未执行启动）', 500, {
+          output: stop.output || `退出码 ${stop.exitCode}`,
+          testOutput: test.output,
+        });
+      }
+      stopOutput = stop.output || '';
+      stopped = true;
+      const afterStop = await this.waitForState(configPath, false, 10000);
+      if (afterStop.running !== false) {
+        throw new NcsError('NGINX_STOP_FAILED', '停止 Nginx 超时，已中止重启（未执行启动）', 500, {
+          output: stopOutput,
+          testOutput: test.output,
+        });
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+
     // On Windows nginx.exe attaches to its console, so the start must not be
     // awaited to completion; on POSIX the start invocation exits by itself.
     const start = process.platform === 'win32'
@@ -252,14 +354,24 @@ export class NginxController {
         privileged: true,
       });
     if (start.exitCode !== 0) {
-      throw new NcsError('NGINX_START_FAILED', 'Nginx 已停止但启动失败，请立即人工检查', 500, {
+      throw new NcsError('NGINX_START_FAILED', stopped ? 'Nginx 已停止但启动失败，请立即人工检查' : 'Nginx 启动失败', 500, {
         output: start.output || `退出码 ${start.exitCode}`,
         testOutput: test.output,
       });
     }
+    const afterStart = await this.waitForState(configPath, true, process.platform === 'win32' ? 10000 : 5000);
+    if (afterStart.running === false) {
+      throw new NcsError('NGINX_START_FAILED', '启动命令已执行，但未检测到运行中的 nginx 进程', 500, {
+        output: start.output || stopOutput,
+        testOutput: test.output,
+        pidFile: afterStart.pidFile,
+      });
+    }
     return {
-      output: [stop.output, start.output].filter(Boolean).join('\n'),
+      output: [stopOutput, start.output].filter(Boolean).join('\n'),
       testOutput: test.output,
+      stopped,
+      status: afterStart,
       method: process.platform === 'win32' ? 'nginx -s stop && nginx start (detached)' : 'nginx -s stop && nginx start',
     };
   }

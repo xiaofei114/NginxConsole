@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import readline from 'node:readline/promises';
 import { NcsError, createLogger } from '@ncs/shared';
 import {
   assertAgentId,
@@ -16,9 +18,15 @@ const HELP = `
 Nginx Console Agent v${VERSION}
 
 用法:
+  ncs-agent setup [--config <PATH>]       一键部署：自动识别 Nginx、交互式注册并启动（推荐）
   ncs-agent enroll --main https://console.example.com --id <AGENT_ID> --token <TOKEN> [选项]
   ncs-agent run [--config <PATH>]
   ncs-agent fingerprint [--config <PATH>]
+
+setup 说明:
+  缺什么就交互式询问什么；已注册过则直接启动。
+  可先用 --main / --id / --nginx-bin 预填，或设置 NCS_ENROLL_TOKEN。
+  加 --force 会覆盖已有配置重新注册。
 
 enroll 选项:
   --config <PATH>            配置文件路径（默认 ${defaultConfigPath()}）
@@ -146,11 +154,15 @@ async function commandEnroll(flags) {
 }
 
 async function commandRun(flags) {
+  const configPath = stringFlag(flags, 'config', { defaultValue: defaultConfigPath() });
+  await startAgent(configPath);
+}
+
+async function startAgent(configPath) {
   const logger = createLogger({ app: 'agent', component: 'run' });
   if (typeof process.getuid === 'function' && process.getuid() === 0) {
     logger.warn('Agent 以 root 运行，建议配合 systemd 沙箱并限制工作目录权限（见 README 部署章节）');
   }
-  const configPath = stringFlag(flags, 'config', { defaultValue: defaultConfigPath() });
   const config = await loadAgentConfig(configPath);
   const client = await AgentClient.create({ configPath, logger });
   let shuttingDown = false;
@@ -174,6 +186,112 @@ async function commandRun(flags) {
   });
   client.start();
   await new Promise(() => {});
+}
+
+async function exists(target) {
+  try {
+    await fs.stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function detectNginxBin() {
+  const candidates = [];
+  if (process.platform === 'win32') {
+    candidates.push('C:/nginx/nginx.exe');
+    try {
+      const entries = await fs.readdir('C:/', { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && /^nginx/i.test(entry.name)) {
+          candidates.push(`C:/${entry.name}/nginx.exe`);
+        }
+      }
+    } catch {
+      // Drive root is not listable; fall back to the common location above.
+    }
+  } else {
+    candidates.push('/usr/sbin/nginx', '/usr/local/nginx/sbin/nginx', '/usr/local/sbin/nginx', '/sbin/nginx');
+  }
+  for (const candidate of candidates) {
+    if (await exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function commandSetup(flags) {
+  const configPath = path.resolve(stringFlag(flags, 'config', { defaultValue: defaultConfigPath() }));
+  const force = boolFlag(flags, 'force');
+
+  let enrolled = false;
+  try {
+    await loadAgentConfig(configPath);
+    enrolled = true;
+  } catch {
+    enrolled = false;
+  }
+  if (enrolled && !force) {
+    log(`已注册，直接启动：${configPath}`);
+    log('（需要重新注册请加 --force）');
+    await startAgent(configPath);
+    return;
+  }
+
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const rl = interactive ? readline.createInterface({ input: process.stdin, output: process.stdout }) : null;
+  const ask = async (question, provided) => {
+    if (provided) return provided;
+    if (!rl) throw new NcsError('MISSING_FLAG', `缺少参数：${question.replace(/[:：]\s*$/, '')}`);
+    const answer = (await rl.question(question)).trim();
+    if (!answer) throw new NcsError('MISSING_FLAG', '输入不能为空');
+    return answer;
+  };
+
+  try {
+    const mainUrl = await ask('主服务器地址（如 https://nginx.example.com）: ', flags.main || process.env.NCS_MAIN_URL);
+    const agentId = await ask('Agent ID: ', stringFlag(flags, 'id'));
+    const token = await ask('一次性注册令牌: ', process.env.NCS_ENROLL_TOKEN || stringFlag(flags, 'token'));
+
+    const nginxBin = await ask('nginx 可执行文件路径: ', stringFlag(flags, 'nginx-bin') || await detectNginxBin());
+    const nginxDir = path.dirname(path.resolve(nginxBin));
+    const defaultWorkspace = process.platform === 'win32'
+      ? nginxDir
+      : (await exists('/etc/nginx/nginx.conf') ? '/etc/nginx' : nginxDir);
+    const allowedRoots = flags.allowedRoot?.length ? flags.allowedRoot.map((item) => path.resolve(String(item))) : [defaultWorkspace];
+    const workspace = flags.workspace ? path.resolve(flags.workspace) : allowedRoots[0];
+    const nginxPrefix = stringFlag(flags, 'nginx-prefix') || (process.platform === 'win32' ? nginxDir : undefined);
+    const controlMode = stringFlag(flags, 'control-mode', {
+      defaultValue: process.platform === 'linux' && await exists('/run/systemd/system') ? 'systemd' : 'signal',
+    });
+
+    rl?.close();
+    log(`正在注册：${mainUrl}（工作目录 ${workspace}）`);
+    const result = await enrollAgent({
+      configPath,
+      mainUrl,
+      agentId,
+      token,
+      allowedRoots,
+      workspace,
+      nginxBin,
+      nginxPrefix,
+      controlMode,
+      systemdUnit: stringFlag(flags, 'systemd-unit', { defaultValue: 'nginx' }),
+      useSudo: boolFlag(flags, 'use-sudo'),
+      certDir: stringFlag(flags, 'cert-dir', { defaultValue: 'ssl' }),
+      allowInsecureHttp: boolFlag(flags, 'insecure-http'),
+      force,
+      enforceTest: !boolFlag(flags, 'dev-allow-untested'),
+    });
+    log('注册成功，正在启动 Agent（Ctrl+C 退出）…');
+    log(`  配置文件: ${result.configPath}`);
+    log(`  工作目录: ${result.config.workspace}`);
+    log(`  nginx   : ${result.config.nginxBin}`);
+  } finally {
+    rl?.close();
+  }
+  await startAgent(configPath);
 }
 
 async function commandFingerprint(flags) {
@@ -204,6 +322,7 @@ async function main() {
   const { flags, positional } = parseArgs(rest);
   if (positional.length > 0) throw new NcsError('INVALID_ARGUMENT', '存在无法识别的参数', 400);
   if (command === 'enroll') return commandEnroll(flags);
+  if (command === 'setup') return commandSetup(flags);
   if (command === 'run') return commandRun(flags);
   if (command === 'fingerprint') return commandFingerprint(flags);
   throw new NcsError('UNKNOWN_COMMAND', `未知命令：${command}`, 400);

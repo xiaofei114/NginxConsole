@@ -220,6 +220,14 @@ export class NginxEngine {
         configFileExists = false;
       }
     }
+    let nginxStatus = null;
+    if (this.workspace) {
+      try {
+        nginxStatus = await this.controller.status(path.join(this.workspace, this.configFileRel));
+      } catch {
+        nginxStatus = { running: null, pid: null, pidFile: null };
+      }
+    }
     return {
       label: this.label,
       hostname: os.hostname(),
@@ -238,6 +246,7 @@ export class NginxEngine {
       certDir: this.certDir,
       configFile,
       configFileExists,
+      nginxStatus,
       enforceTest: this.enforceTest,
       version: '1.0.0',
     };

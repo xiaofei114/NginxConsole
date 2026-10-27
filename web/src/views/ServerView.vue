@@ -207,6 +207,7 @@ async function deleteAgent() {
           :server-id="serverId"
           :info="info"
           @pick-workspace="workspaceOpen = true"
+          @refresh-info="loadAll({ silent: true })"
         />
 
         <CertificatePanel

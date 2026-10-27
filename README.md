@@ -114,9 +114,35 @@ npm run dev:web
 
 ### 5.2 添加子服务器 Agent
 
-1. 在总览页点击“添加服务器”，填写名称。
-2. 页面会显示 **Agent ID**、**一次性注册令牌** 与可复制的注册命令。令牌只显示一次，默认 30 分钟有效。
-3. 在子服务器上安装本项目（同一版本），执行注册（令牌建议用环境变量传入，避免出现在命令历史）：
+子服务器只主动出站连接主服务器的 `/agent/ws`，不需要开放任何入站端口；主服务器地址必须是 Agent 可达的公网 HTTPS 地址（`NCS_PUBLIC_ORIGIN`）。
+
+**最简方式（推荐）**
+
+1. 主服务器总览页 →“添加服务器”，记下 **Agent ID** 与 **一次性注册令牌**（只显示一次，默认 30 分钟有效）。
+2. 子服务器安装 Node.js 22，拷贝本项目后执行 `npm install`（不需要构建前端）。
+3. 在项目目录执行：
+
+```bash
+npm run agent:setup
+```
+
+脚本会依次询问主服务器地址、Agent ID、令牌；nginx 路径会自动探测（Windows 扫描 `C:\nginx*`，Linux 依次尝试 `/usr/sbin/nginx` 等），确认后自动注册并启动 Agent。已注册过则直接启动，加 `--force` 可重新注册。
+
+窗口关闭后 Agent 会停止。需要常驻时：
+
+```bash
+# Windows：pm2
+set NCS_AGENT_CONFIG=%APPDATA%\nginx-console\agent.json
+npm run pm2:start:agent
+
+# Linux：systemd
+sudo cp deploy/nginx-console-agent.service /etc/systemd/system/
+sudo systemctl enable --now nginx-console-agent
+```
+
+**非交互 / 完整参数**
+
+适合自动化部署或需要精确控制权限的场景（令牌建议用环境变量传入，避免出现在命令历史）：
 
 ```bash
 sudo -u nginx-console-agent \
@@ -131,18 +157,14 @@ sudo -u nginx-console-agent \
     --control-mode systemd \
     --systemd-unit nginx \
     --use-sudo
-```
 
-4. 启动 Agent（或使用 systemd）：
-
-```bash
 node /opt/nginx-console/packages/agent/src/index.js run \
   --config /etc/nginx-console/agent.json
 ```
 
-5. 总览页显示 Agent 在线后，即可进入其详情页管理工作目录、配置与证书。
+Windows 上需要显式给出 `--nginx-bin C:/nginx/nginx.exe` 和 `--nginx-prefix C:/nginx`（没有 systemd，`--control-mode signal`）。
 
-Agent 仅主动连接主服务器的 `/agent/ws`，不需要公网入站端口。主服务器注册地址必须是 Agent 可达的公网 HTTPS 地址（`NCS_PUBLIC_ORIGIN`）。
+总览页显示 Agent 在线后，即可进入其详情页管理工作目录、配置与证书。
 
 ### 5.3 证书替换
 
