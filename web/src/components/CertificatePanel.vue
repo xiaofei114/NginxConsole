@@ -37,14 +37,19 @@ const archiveError = ref('');
 const ARCHIVE_LIMIT = 512 * 1024;
 const CERT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+const certBase = computed(() => (form.name || 'example.com').replace(/_nginx$/i, ''));
+const certDirectory = computed(() => `${certBase.value}_nginx`);
+
 const snippet = computed(() => {
   const result = uploadResult.value;
   const name = result?.name || form.name || '<name>';
   const mode = result?.layout || layout.value;
   if (mode === 'directory') {
+    const dir = result?.directory || certDirectory.value;
+    const base = result?.base || certBase.value;
     return [
-      `ssl_certificate     ${certDir.value}/${name}/fullchain.pem;`,
-      `ssl_certificate_key ${certDir.value}/${name}/privkey.pem;`,
+      `ssl_certificate     ${certDir.value}/${dir}/${base}_bundle.crt;`,
+      `ssl_certificate_key ${certDir.value}/${dir}/${base}.key;`,
     ].join('\n');
   }
   return [
@@ -327,7 +332,7 @@ function fileSize(text) {
               </div>
               <span class="hint">
                 <template v-if="layout === 'directory'">
-                  写入 {{ certDir }}/{{ form.name || 'example.com' }}/fullchain.pem 与 privkey.pem，可直接替换现有子目录证书
+                  写入 {{ certDir }}/{{ certDirectory }}/{{ certBase }}_bundle.crt 与 {{ certBase }}.key
                 </template>
                 <template v-else>
                   写入 {{ certDir }}/{{ form.name || 'example.com' }}.crt / .chain.pem / .key
@@ -343,11 +348,11 @@ function fileSize(text) {
                 type="text"
                 maxlength="64"
                 spellcheck="false"
-                :placeholder="layout === 'directory' ? 'nginx.xiaofei.icu_nginx' : 'example.com'"
+                :placeholder="layout === 'directory' ? 'nginx.xiaofei.icu' : 'example.com'"
               />
               <span class="hint">
                 <template v-if="layout === 'directory'">
-                  填现有子目录名（如 nginx.xiaofei.icu_nginx），即可覆盖其中的 fullchain.pem 与 privkey.pem。
+                  填域名即可（自动生成域名_nginx 目录与域名_bundle.crt / 域名.key），填已存在的 xxx_nginx 也兼容。
                 </template>
                 <template v-else>
                   例如 example.com，将生成 example.com.crt / .chain.pem / .key。

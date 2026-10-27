@@ -667,9 +667,11 @@ export class NginxEngine {
       });
 
       const candidates = [];
+      const bundle = files.find((file) => file.toLowerCase().endsWith('_bundle.crt'));
+      if (bundle) candidates.push(bundle);
       for (const preferred of ['fullchain.pem', 'cert.pem', 'server.crt', 'server.pem']) {
         const actual = byLower.get(preferred);
-        if (actual) candidates.push(actual);
+        if (actual && !candidates.includes(actual)) candidates.push(actual);
       }
       for (const file of [...files].sort((a, b) => a.localeCompare(b))) {
         const lower = file.toLowerCase();
@@ -747,16 +749,18 @@ export class NginxEngine {
     return this.runExclusive(async () => {
       this.requireWorkspace();
       const certDirectory = await this.ensureDirectoryInside(this.certDir);
+      const targetDirectory = layout === 'directory' ? `${name.replace(/_nginx$/i, '')}_nginx` : null;
+      const targetBase = layout === 'directory' ? name.replace(/_nginx$/i, '') : name;
       const targets = layout === 'directory'
         ? [
             {
-              relPath: path.posix.join(this.certDir, name, 'fullchain.pem'),
+              relPath: path.posix.join(this.certDir, targetDirectory, `${targetBase}_bundle.crt`),
               content: Buffer.from(`${bundle.certPem}${bundle.chainPem}`, 'utf8'),
               mode: 0o644,
               kind: 'certificate',
             },
             {
-              relPath: path.posix.join(this.certDir, name, 'privkey.pem'),
+              relPath: path.posix.join(this.certDir, targetDirectory, `${targetBase}.key`),
               content: Buffer.from(bundle.keyPem, 'utf8'),
               mode: 0o600,
               kind: 'privateKey',
@@ -783,8 +787,8 @@ export class NginxEngine {
             },
           ];
 
-      if (layout === 'directory') {
-        await this.ensureDirectoryInside(path.posix.join(this.certDir, name));
+      if (targetDirectory) {
+        await this.ensureDirectoryInside(path.posix.join(this.certDir, targetDirectory));
       }
 
       const states = [];
@@ -848,6 +852,8 @@ export class NginxEngine {
       return {
         name,
         layout,
+        directory: targetDirectory,
+        base: targetBase,
         files: states.map((state) => ({
           path: state.relPath,
           kind: state.kind,

@@ -266,15 +266,20 @@ test('NginxEngine enforces workspace sandbox, optimistic locking and backups', a
 
     const result = await engine.uploadCertificate(payload);
     assert.equal(result.layout, 'directory');
+    assert.equal(result.directory, 'panel2.example_nginx');
     assert.deepEqual(result.files.map((file) => file.path), [
-      'ssl/panel2.example_nginx/fullchain.pem',
-      'ssl/panel2.example_nginx/privkey.pem',
+      'ssl/panel2.example_nginx/panel2.example_bundle.crt',
+      'ssl/panel2.example_nginx/panel2.example.key',
     ]);
-    const fullchain = await fs.readFile(path.join(root, 'ssl', 'panel2.example_nginx', 'fullchain.pem'), 'utf8');
+    const fullchain = await fs.readFile(path.join(root, 'ssl', 'panel2.example_nginx', 'panel2.example_bundle.crt'), 'utf8');
     assert.match(fullchain, /BEGIN CERTIFICATE/);
     assert.ok(!fullchain.includes('PRIVATE KEY'));
     const keyFile = result.files.find((file) => file.kind === 'privateKey');
     assert.equal(keyFile.mode, '0600');
+
+    const added = await engine.uploadCertificate({ ...payload, name: 'panel3.example' });
+    assert.equal(added.directory, 'panel3.example_nginx');
+    assert.equal(added.files[0].path, 'ssl/panel3.example_nginx/panel3.example_bundle.crt');
 
     const overwritten = await engine.uploadCertificate(payload);
     assert.ok(overwritten.files.every((file) => /^[0-9a-f-]{36}$/.test(file.backupId)));
@@ -283,6 +288,6 @@ test('NginxEngine enforces workspace sandbox, optimistic locking and backups', a
     const entry = listing.certificates.find((item) => item.name === 'panel2.example_nginx');
     assert.equal(entry.directory, true);
     assert.equal(entry.keyPresent, true);
-    assert.equal(entry.file, 'ssl/panel2.example_nginx/fullchain.pem');
+    assert.equal(entry.file, 'ssl/panel2.example_nginx/panel2.example_bundle.crt');
   });
 });
