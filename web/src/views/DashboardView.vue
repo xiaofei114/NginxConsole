@@ -20,6 +20,12 @@ const certOverview = ref(null);
 const certLoading = ref(true);
 const certError = ref('');
 
+const alertTotal = computed(() => {
+  if (!certOverview.value) return 0;
+  return certOverview.value.expired.length + certOverview.value.expiresSoon.length;
+});
+const alertTone = computed(() => (certOverview.value?.expired.length ? 'badge-danger' : 'badge-warn'));
+
 const createOpen = ref(false);
 const createName = ref('');
 const createError = ref('');
@@ -256,85 +262,6 @@ async function copy(value, label = '内容') {
       </div>
     </section>
 
-    <section class="cert-alerts">
-      <div class="section-head">
-        <div class="section-title">
-          <h2>证书到期提醒</h2>
-          <span v-if="certOverview" class="badge">{{ certOverview.count }}</span>
-        </div>
-        <span v-if="certOverview" class="small muted">
-          更新于 {{ timeAgo(certOverview.generatedAt) }}<template v-if="certOverview.cached"> · 缓存</template>
-        </span>
-        <span v-else-if="certLoading" class="small muted">正在汇总…</span>
-      </div>
-
-      <div v-if="certError" class="alert alert-danger">
-        <AppIcon name="alert" :size="15" />
-        <div>{{ certError }}</div>
-      </div>
-
-      <div v-if="certLoading && !certOverview" class="loading-row">
-        <span class="spinner" />
-        正在汇总各节点证书…
-      </div>
-
-      <template v-else-if="certOverview">
-        <div v-if="!certOverview.expired.length && !certOverview.expiresSoon.length" class="cert-ok card">
-          <AppIcon name="check" :size="16" />
-          <span>共 {{ certOverview.count }} 张证书，30 天内没有到期证书。</span>
-        </div>
-        <div v-else class="cert-alert-grid">
-          <div v-if="certOverview.expired.length" class="card cert-alert-card danger">
-            <div class="cert-alert-head">
-              <AppIcon name="alert" :size="14" />
-              <strong>已过期</strong>
-              <span class="badge badge-danger">{{ certOverview.expired.length }}</span>
-            </div>
-            <ul class="cert-rows">
-              <li v-for="cert in certOverview.expired" :key="`${cert.serverId}:${cert.file}`">
-                <div class="cert-main">
-                  <button class="cert-name" type="button" :title="cert.file" @click="openServerCert(cert.serverId)">
-                    {{ certFileName(cert) }}
-                  </button>
-                  <span class="cert-sub">{{ cert.serverName }} · 到期 {{ formatTime(cert.validTo) }}</span>
-                </div>
-                <span class="badge badge-danger">{{ daysLabel(cert) }}</span>
-              </li>
-            </ul>
-          </div>
-
-          <div v-if="certOverview.expiresSoon.length" class="card cert-alert-card warn">
-            <div class="cert-alert-head">
-              <AppIcon name="history" :size="14" />
-              <strong>即将到期（{{ certOverview.thresholdDays }} 天内）</strong>
-              <span class="badge badge-warn">{{ certOverview.expiresSoon.length }}</span>
-            </div>
-            <ul class="cert-rows">
-              <li v-for="cert in certOverview.expiresSoon" :key="`${cert.serverId}:${cert.file}`">
-                <div class="cert-main">
-                  <button class="cert-name" type="button" :title="cert.file" @click="openServerCert(cert.serverId)">
-                    {{ certFileName(cert) }}
-                  </button>
-                  <span class="cert-sub">{{ cert.serverName }} · 到期 {{ formatTime(cert.validTo) }}</span>
-                </div>
-                <span class="badge badge-warn">{{ daysLabel(cert) }}</span>
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <p v-if="certOverview.errors.length || certOverview.skipped.length" class="cert-note small muted">
-          <template v-if="certOverview.errors.length">
-            获取失败：{{ certOverview.errors.map((item) => `${item.serverName}（${item.error}）`).join('、') }}
-          </template>
-          <template v-if="certOverview.errors.length && certOverview.skipped.length">；</template>
-          <template v-if="certOverview.skipped.length">
-            未包含：{{ certOverview.skipped.map((item) => `${item.serverName}（${item.reason}）`).join('、') }}
-          </template>
-        </p>
-      </template>
-    </section>
-
     <section class="security-strip">
       <div class="security-item">
         <span class="security-icon"><AppIcon name="key" :size="15" /></span>
@@ -417,6 +344,87 @@ async function copy(value, label = '内容') {
           创建注册令牌
         </button>
       </div>
+    </section>
+
+    <section class="cert-alerts">
+      <div class="section-head">
+        <div class="section-title">
+          <h2>证书到期提醒</h2>
+          <span v-if="certOverview" class="badge" :class="alertTotal ? alertTone : ''">{{ alertTotal }}</span>
+        </div>
+        <span v-if="certOverview" class="small muted">
+          更新于 {{ timeAgo(certOverview.generatedAt) }}<template v-if="certOverview.cached"> · 缓存</template>
+        </span>
+        <span v-else-if="certLoading" class="small muted">正在汇总…</span>
+      </div>
+
+      <div v-if="certError" class="alert alert-danger">
+        <AppIcon name="alert" :size="15" />
+        <div>{{ certError }}</div>
+      </div>
+
+      <div v-if="certLoading && !certOverview" class="loading-row">
+        <span class="spinner" />
+        正在汇总各节点证书…
+      </div>
+
+      <template v-else-if="certOverview">
+        <div v-if="!alertTotal" class="cert-ok card">
+          <AppIcon name="check" :size="16" />
+          <span>共 {{ certOverview.count }} 张证书，30 天内没有到期证书。</span>
+        </div>
+        <div v-else class="card cert-card">
+          <div v-if="certOverview.expired.length" class="cert-group">
+            <div class="cert-group-head danger">
+              <span class="cert-dot" />
+              已过期
+              <em>{{ certOverview.expired.length }} 张</em>
+            </div>
+            <ul class="cert-rows">
+              <li v-for="cert in certOverview.expired" :key="`${cert.serverId}:${cert.file}`">
+                <button class="cert-file" type="button" :title="cert.file" @click="openServerCert(cert.serverId)">
+                  {{ certFileName(cert) }}
+                </button>
+                <button class="cert-server" type="button" @click="openServerCert(cert.serverId)">
+                  {{ cert.serverName }}
+                </button>
+                <span class="cert-date">{{ formatTime(cert.validTo) }}</span>
+                <span class="badge badge-danger cert-days">{{ daysLabel(cert) }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="certOverview.expiresSoon.length" class="cert-group">
+            <div class="cert-group-head warn">
+              <span class="cert-dot" />
+              即将到期
+              <em>{{ certOverview.thresholdDays }} 天内 · {{ certOverview.expiresSoon.length }} 张</em>
+            </div>
+            <ul class="cert-rows">
+              <li v-for="cert in certOverview.expiresSoon" :key="`${cert.serverId}:${cert.file}`">
+                <button class="cert-file" type="button" :title="cert.file" @click="openServerCert(cert.serverId)">
+                  {{ certFileName(cert) }}
+                </button>
+                <button class="cert-server" type="button" @click="openServerCert(cert.serverId)">
+                  {{ cert.serverName }}
+                </button>
+                <span class="cert-date">{{ formatTime(cert.validTo) }}</span>
+                <span class="badge badge-warn cert-days">{{ daysLabel(cert) }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <p v-if="certOverview.errors.length || certOverview.skipped.length" class="cert-note small muted">
+          <template v-if="certOverview.errors.length">
+            获取失败：{{ certOverview.errors.map((item) => `${item.serverName}（${item.error}）`).join('、') }}
+          </template>
+          <template v-if="certOverview.errors.length && certOverview.skipped.length">；</template>
+          <template v-if="certOverview.skipped.length">
+            未包含：{{ certOverview.skipped.map((item) => `${item.serverName}（${item.reason}）`).join('、') }}
+          </template>
+        </p>
+      </template>
     </section>
 
     <ModalDialog :open="createOpen" title="新增子服务器" subtitle="创建后生成一次性注册令牌，令牌仅显示一次。" width="470px" :busy="creating" @close="createOpen = false">
@@ -518,29 +526,39 @@ async function copy(value, label = '内容') {
 .stat-value.warn { color: var(--warn-text); }
 .stat-value.danger { color: var(--danger-text); }
 .stat-note { color: var(--text-faint); font-size: 10.5px; }
-.cert-alerts { margin-top: 18px; }
-.cert-alert-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.cert-alert-card { padding: 0; overflow: hidden; }
-.cert-alert-head {
+.cert-alerts { margin-top: 26px; }
+.cert-card { padding: 0; overflow: hidden; }
+.cert-group + .cert-group { border-top: 1px solid var(--border); }
+.cert-group-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 13px;
+  gap: 7px;
+  padding: 8px 14px;
+  background: var(--subtle-bg);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
 }
-.cert-alert-card.danger .cert-alert-head { color: var(--danger-text); background: var(--danger-soft); }
-.cert-alert-card.warn .cert-alert-head { color: var(--warn-text); background: var(--warn-soft); }
-.cert-rows { list-style: none; margin: 0; padding: 0; max-height: 268px; overflow: auto; }
-.cert-rows li { display: flex; align-items: center; gap: 10px; padding: 9px 13px; }
+.cert-group-head.danger { color: var(--danger-text); }
+.cert-group-head.warn { color: var(--warn-text); }
+.cert-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.cert-group-head em { font-style: normal; font-weight: 400; color: var(--text-faint); }
+.cert-rows { list-style: none; margin: 0; padding: 0; }
+.cert-rows li {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(96px, 0.6fr) 140px 88px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+}
 .cert-rows li + li { border-top: 1px solid var(--border); }
-.cert-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.cert-name {
+.cert-rows li:hover { background: var(--hover-bg); }
+.cert-file {
   background: none;
   border: 0;
   padding: 0;
   color: var(--text);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   text-align: left;
   overflow: hidden;
@@ -548,8 +566,22 @@ async function copy(value, label = '内容') {
   white-space: nowrap;
   cursor: pointer;
 }
-.cert-name:hover { color: var(--accent-bright); text-decoration: underline; }
-.cert-sub { color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cert-file:hover { color: var(--accent-bright); }
+.cert-server {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cert-server:hover { color: var(--accent-bright); }
+.cert-date { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cert-days { justify-self: end; }
 .cert-ok {
   display: flex;
   align-items: center;
@@ -651,9 +683,19 @@ async function copy(value, label = '内容') {
 
 @media (max-width: 1180px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .cert-alert-grid { grid-template-columns: 1fr; }
   .security-strip { grid-template-columns: 1fr; }
   .security-item + .security-item { border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 900px) {
+  .cert-rows li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "file days" "server server";
+    row-gap: 3px;
+  }
+  .cert-file { grid-area: file; }
+  .cert-server { grid-area: server; }
+  .cert-days { grid-area: days; }
+  .cert-date { display: none; }
 }
 @media (max-width: 700px) {
   .server-grid { grid-template-columns: 1fr; }
