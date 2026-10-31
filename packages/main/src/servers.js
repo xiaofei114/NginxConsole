@@ -25,6 +25,7 @@ const REMOTE_TIMEOUTS = {
   'cert.list': 30000,
   'cert.upload': 60000,
   'cert.uploadArchive': 60000,
+  'cert.delete': 60000,
 };
 
 function validateAgentName(name) {
@@ -96,7 +97,7 @@ export class ServerManager {
         online: agent.status === 'active' && this.hub.isOnline(agent.id),
         keyFingerprint: agent.keyFingerprint || null,
         createdAt: agent.createdAt,
-        lastSeenAt: agent.lastSeenAt || null,
+        lastSeenAt: this.hub.lastSeen(agent.id) || agent.lastSeenAt || null,
         enrolledAt: agent.enrolledAt || null,
         info: this.hub.cachedInfo(agent.id),
       });

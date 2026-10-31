@@ -149,12 +149,14 @@ export class AgentHub {
       alive: true,
       ip,
       connectedAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      persistedAt: Date.now(),
     };
     this.connections.set(agent.id, conn);
     this.infoCache.delete(agent.id);
 
     ws.on('pong', () => {
-      conn.alive = true;
+      this.markSeen(conn);
     });
     ws.on('message', (data) => {
       this.handleMessage(conn, data).catch((error) => {
@@ -198,6 +200,16 @@ export class AgentHub {
     this.touchLastSeen(agent.id).catch(() => {});
   }
 
+  markSeen(conn) {
+    conn.alive = true;
+    conn.lastSeenAt = new Date().toISOString();
+  }
+
+  lastSeen(agentId) {
+    const conn = this.connections.get(agentId);
+    return conn ? conn.lastSeenAt : null;
+  }
+
   async touchLastSeen(agentId) {
     const now = new Date().toISOString();
     await this.store
@@ -232,6 +244,8 @@ export class AgentHub {
       this.drop(conn, 'protocol violation');
       throw error;
     }
+    // Any verified message proves the Agent is alive, not only the pong frame.
+    this.markSeen(conn);
     if (typeof envelope.id !== 'string' || !REQUEST_ID_RE.test(envelope.id)) {
       this.drop(conn, 'invalid response id');
       throw new NcsError('INVALID_ENVELOPE', '响应 ID 无效', 400);
@@ -281,6 +295,7 @@ export class AgentHub {
   }
 
   heartbeat() {
+    const now = Date.now();
     for (const conn of this.connections.values()) {
       if (!conn.alive) {
         conn.ws.terminate();
@@ -291,6 +306,13 @@ export class AgentHub {
         conn.ws.ping();
       } catch {
         conn.ws.terminate();
+        continue;
+      }
+      // Keep the stored timestamp reasonably fresh without rewriting the
+      // store on every 30s ping; in-memory lastSeenAt covers the UI meanwhile.
+      if (now - conn.persistedAt >= 5 * 60 * 1000) {
+        conn.persistedAt = now;
+        this.touchLastSeen(conn.agentId).catch(() => {});
       }
     }
   }

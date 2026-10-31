@@ -226,6 +226,8 @@ export class NginxEngine {
         return this.uploadCertificate(payload);
       case 'cert.uploadArchive':
         return this.uploadCertificateArchive(payload);
+      case 'cert.delete':
+        return this.deleteCertificate(payload);
       default:
         throw new NcsError('UNKNOWN_COMMAND', '未知命令', 400);
     }
@@ -924,6 +926,156 @@ export class NginxEngine {
         ignoredEntries: archive.ignoredEntries,
       },
     };
+  }
+
+  /**
+   * Delete a certificate file together with its same-directory key/chain.
+   * Every file is backed up before unlinking and `nginx -t` runs afterwards, so
+   * a certificate that is still referenced gets restored instead of leaving a
+   * broken Nginx configuration behind.
+   */
+  async deleteCertificate(payload) {
+    if (payload.confirm !== true) throw new NcsError('CONFIRM_REQUIRED', '删除证书需要显式确认', 400);
+    const includeKey = payload.includeKey !== false;
+    const targetRel = normalizeRelativePath(payload.file, { allowEmpty: false });
+
+    return this.runExclusive(async () => {
+      this.requireWorkspace();
+      const certDirectory = await this.ensureDirectoryInside(this.certDir);
+      const target = await resolveSafeFile(this.workspace, targetRel, { mustExist: true });
+      if (!target.stat.isFile()) {
+        throw new NcsError('INVALID_CERT_TARGET', '只能删除证书文件', 400);
+      }
+      if (!isInside(certDirectory.realPath, target.absolutePath)) {
+        throw new NcsError('PATH_ESCAPE', '证书路径超出证书目录', 403);
+      }
+
+      const targetName = path.basename(target.absolutePath);
+      const targetLower = targetName.toLowerCase();
+      const extension = path.extname(targetLower);
+      if (!['.crt', '.cer', '.pem'].includes(extension) || ['privkey.pem', 'private.pem', 'key.pem'].includes(targetLower)) {
+        throw new NcsError('INVALID_CERT_TARGET', '只能删除证书文件，私钥请随证书一起删除', 400);
+      }
+
+      // Companion files that belong to the same certificate upload.
+      const base = targetName.replace(/\.(crt|cer|pem)$/i, '');
+      const siblings = [`${base}.chain.pem`];
+      if (includeKey) {
+        if (/_bundle\.crt$/i.test(targetName)) {
+          siblings.push(targetName.replace(/_bundle\.crt$/i, '.key'));
+        } else if (['fullchain.pem', 'cert.pem', 'server.crt', 'server.pem'].includes(targetLower)) {
+          siblings.push('privkey.pem', 'private.pem', 'key.pem');
+        } else {
+          siblings.push(`${base}.key`);
+        }
+      }
+
+      const directoryRel = path.posix.dirname(targetRel);
+      const seen = new Set([target.absolutePath]);
+      const victims = [{
+        relPath: displayRelativePath(this.workspace, target.absolutePath),
+        absolutePath: target.absolutePath,
+        stat: target.stat,
+      }];
+      for (const name of siblings) {
+        let file;
+        try {
+          file = await resolveSafeFile(this.workspace, path.posix.join(directoryRel, name), { mustExist: true });
+        } catch {
+          continue;
+        }
+        if (!file.stat.isFile() || seen.has(file.absolutePath)) continue;
+        if (!isInside(certDirectory.realPath, file.absolutePath)) continue;
+        seen.add(file.absolutePath);
+        victims.push({
+          relPath: displayRelativePath(this.workspace, file.absolutePath),
+          absolutePath: file.absolutePath,
+          stat: file.stat,
+        });
+      }
+
+      const states = [];
+      const restore = async () => {
+        for (const state of states) {
+          try {
+            await atomicWriteFile(state.absolutePath, state.content, {
+              mode: state.mode,
+              uid: state.stat.uid,
+              gid: state.stat.gid,
+            });
+          } catch {
+            // Backups stay available for manual recovery.
+          }
+        }
+      };
+
+      for (const victim of victims) {
+        let content;
+        try {
+          content = await readFileLimited(victim.absolutePath, LIMITS.maxCertificateBytes);
+        } catch {
+          await restore();
+          throw new NcsError('CERT_DELETE_FAILED', '无法读取证书文件，已中止删除', 500);
+        }
+        // Only the certificate itself is content-checked: companion key files
+        // are expected to contain a private key and are deleted on purpose.
+        if (victim.absolutePath === target.absolutePath && isPrivateKeyContent(content.toString('utf8'))) {
+          await restore();
+          throw new NcsError('INVALID_CERT_TARGET', '目标是私钥文件，不能作为证书删除', 400);
+        }
+        let backupId;
+        try {
+          backupId = (
+            await this.backups.create({
+              workspace: this.workspace,
+              relPath: victim.relPath,
+              absolutePath: victim.absolutePath,
+              content,
+              mode: victim.stat.mode & 0o777,
+              reason: 'certificate-delete',
+            })
+          ).id;
+        } catch {
+          await restore();
+          throw new NcsError('CERT_DELETE_FAILED', '备份证书失败，已中止删除', 500);
+        }
+        const state = { ...victim, content, mode: victim.stat.mode & 0o777, backupId, deleted: false };
+        states.push(state);
+        try {
+          await fs.unlink(victim.absolutePath);
+          state.deleted = true;
+        } catch {
+          await restore();
+          throw new NcsError('CERT_DELETE_FAILED', '删除证书文件失败，已恢复', 500);
+        }
+      }
+
+      let testResult = null;
+      if (this.enforceTest) {
+        try {
+          testResult = await this.controller.test(await this.configPath());
+        } catch (error) {
+          await restore();
+          throw new NcsError(
+            'NGINX_TEST_FAILED',
+            '证书已删除但 Nginx 配置检测失败，已自动恢复；请先从配置中移除对该证书的引用',
+            400,
+            {
+              output: error?.details?.output || error?.message || 'nginx -t 失败',
+              rolledBack: true,
+            },
+          );
+        }
+      }
+
+      return {
+        deleted: states.map((state) => state.relPath),
+        backups: states.map((state) => ({ path: state.relPath, backupId: state.backupId })),
+        includeKey,
+        tested: Boolean(testResult),
+        testOutput: testResult?.output || null,
+      };
+    });
   }
 
   async rollbackUpload(states) {

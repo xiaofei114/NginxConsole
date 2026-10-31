@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import AppIcon from '../components/AppIcon.vue';
 import ConfigWorkspace from '../components/ConfigWorkspace.vue';
@@ -44,12 +44,40 @@ const nginxLabel = computed(() => {
 });
 const showOffline = computed(() => !loading.value && !isLocal.value && !info.value);
 
-onMounted(loadAll);
+let metaTimer = null;
+
+onMounted(() => {
+  loadAll();
+  metaTimer = setInterval(refreshMeta, 30000);
+  document.addEventListener('visibilitychange', onVisibility);
+});
+
+onBeforeUnmount(() => {
+  clearInterval(metaTimer);
+  document.removeEventListener('visibilitychange', onVisibility);
+});
 
 watch(serverId, () => {
   tab.value = 'config';
   loadAll();
 });
+
+function onVisibility() {
+  if (document.visibilityState === 'visible') refreshMeta();
+}
+
+// Only refresh the server record (heartbeat / online state); the heavy info
+// call stays on explicit refresh so polling does not hit the Agent every 30s.
+async function refreshMeta() {
+  if (document.visibilityState !== 'visible') return;
+  try {
+    const list = await api.get('/servers');
+    const next = (list.servers || []).find((item) => item.id === serverId.value) || null;
+    if (next) serverMeta.value = next;
+  } catch {
+    // Ignore transient polling errors.
+  }
+}
 
 async function loadAll({ silent = false } = {}) {
   if (!silent) loading.value = true;

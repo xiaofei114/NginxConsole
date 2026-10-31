@@ -71,6 +71,7 @@ export function actionLabel(action) {
     'server.nginx.reload': 'Nginx 平滑重载',
     'server.nginx.restart': 'Nginx 重启',
     'server.cert.upload': '更新 SSL 证书',
+    'server.cert.delete': '删除 SSL 证书',
   };
   return labels[action] || action;
 }

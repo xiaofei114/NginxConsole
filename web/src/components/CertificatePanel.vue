@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import AppIcon from './AppIcon.vue';
+import ConfirmDialog from './ConfirmDialog.vue';
 import { api, ApiError } from '../lib/api.js';
 import { copyText, daysText, expiryTone, formatBytes, formatTime } from '../lib/format.js';
 import { toast } from '../lib/toast.js';
@@ -33,6 +34,9 @@ const archiveInput = ref(null);
 const archiveFile = ref(null);
 const archiveUploading = ref(false);
 const archiveError = ref('');
+const deleteTarget = ref(null);
+const deleting = ref(false);
+const deleteError = ref('');
 
 const ARCHIVE_LIMIT = 512 * 1024;
 const CERT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -279,6 +283,39 @@ async function submitUpload() {
   }
 }
 
+const deleteMessage = computed(() => {
+  const cert = deleteTarget.value;
+  if (!cert) return '';
+  const keyPart = cert.keyPresent ? '，以及同目录的配套私钥文件' : '（同目录的配套私钥 / 链文件若存在会一并删除）';
+  return `将删除 ${cert.file}${keyPart}。\n删除前会自动备份并执行 nginx -t；若证书仍被某个站点配置引用，检测失败会自动恢复。`;
+});
+
+function requestDelete(cert) {
+  deleteError.value = '';
+  deleteTarget.value = cert;
+}
+
+async function confirmDelete() {
+  const cert = deleteTarget.value;
+  if (!cert || deleting.value) return;
+  deleting.value = true;
+  try {
+    const data = await api.delete(`/servers/${props.serverId}/certs`, {
+      body: { file: cert.file, includeKey: true, confirm: true },
+    });
+    toast.success(`已删除 ${data.deleted.length} 个文件`);
+    if (selected.value === cert.file) selected.value = null;
+    await load();
+  } catch (caught) {
+    const message = caught instanceof ApiError ? caught.message : '删除证书失败';
+    deleteError.value = caught?.details?.output ? `${message}\n${caught.details.output}` : message;
+    toast.error(message);
+  } finally {
+    deleting.value = false;
+    deleteTarget.value = null;
+  }
+}
+
 async function copy(value) {
   if (await copyText(value)) toast.success('已复制');
   else toast.error('复制失败');
@@ -499,6 +536,10 @@ function fileSize(text) {
             </button>
           </div>
           <div class="card-body cert-list-body">
+            <div v-if="deleteError" class="alert alert-danger">
+              <AppIcon name="alert" :size="15" />
+              <div class="pre-line">{{ deleteError }}</div>
+            </div>
             <div v-if="loading" class="loading-row">
               <span class="spinner" />
               正在扫描证书…
@@ -543,6 +584,15 @@ function fileSize(text) {
                     <button class="icon-button" type="button" aria-label="复制证书路径" @click="copy(cert.file)">
                       <AppIcon name="copy" :size="13" />
                     </button>
+                    <button
+                      class="icon-button cert-delete"
+                      type="button"
+                      aria-label="删除证书"
+                      title="删除证书"
+                      @click="requestDelete(cert)"
+                    >
+                      <AppIcon name="trash" :size="13" />
+                    </button>
                     <button class="btn btn-sm btn-ghost" type="button" @click="pickExisting(cert)">
                       替换
                       <AppIcon name="chevronRight" :size="12" />
@@ -563,6 +613,17 @@ function fileSize(text) {
         </section>
       </div>
     </template>
+
+    <ConfirmDialog
+      :open="Boolean(deleteTarget)"
+      :busy="deleting"
+      title="删除证书？"
+      :message="deleteMessage"
+      confirm-text="删除"
+      danger
+      @close="deleteTarget = null"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 
@@ -651,6 +712,9 @@ function fileSize(text) {
 .san-chip.missing { color: var(--warn-text); background: var(--warn-soft); border-color: var(--warn-border); }
 .cert-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--border); }
 .cert-actions { display: flex; align-items: center; gap: 4px; }
+.cert-delete { color: var(--danger-text); }
+.cert-delete:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger-text); }
+.cert-list-body .pre-line { white-space: pre-wrap; }
 .cert-errors { margin-top: 10px; padding: 9px; border-radius: 8px; border: 1px solid var(--warn-border); background: var(--warn-soft); }
 .cert-error-row { display: flex; flex-direction: column; gap: 1px; margin-top: 6px; font-size: 10px; color: var(--warn-text); word-break: break-all; }
 

@@ -536,6 +536,17 @@ export async function createApp(config, { logger } = {}) {
     sendOk(res, data);
   }));
 
+  api.delete('/servers/:serverId/certs', route(async (req, res) => {
+    const { serverId } = req.params;
+    const body = bodyOf(req);
+    const file = stringField(body, 'file', { max: 512 });
+    if (body.confirm !== true) throw new NcsError('CONFIRM_REQUIRED', '删除证书需要显式确认', 400);
+    const includeKey = body.includeKey !== false;
+    const data = await withAudit(req, { action: 'server.cert.delete', serverId, target: file }, () =>
+      manager.execute(serverId, 'cert.delete', { file, includeKey, confirm: true }));
+    sendOk(res, data);
+  }));
+
   api.get('/audit', route(async (req, res) => {
     const limit = Number(req.query.limit) || 100;
     const serverId = typeof req.query.serverId === 'string' ? req.query.serverId : null;
