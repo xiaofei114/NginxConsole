@@ -181,7 +181,13 @@ export class NginxController {
   }
 
   async test(configPath) {
-    const result = await this.runNginx([...this.prefixArgs(), '-t', '-c', configPath], { timeoutMs: 15000 });
+    // `nginx -t` opens the pid file and error log for writing, so a non-root
+    // Agent fails on root-owned paths (e.g. `/run/nginx.pid`). Run it through
+    // the same precise sudo rule as reload/start when sudo is enabled.
+    const result = await this.runNginx([...this.prefixArgs(), '-t', '-c', configPath], {
+      timeoutMs: 15000,
+      privileged: true,
+    });
     if (result.exitCode !== 0) {
       throw new NcsError('NGINX_TEST_FAILED', 'Nginx 配置检测失败', 400, {
         output: result.output || `nginx -t 退出码 ${result.exitCode}`,
