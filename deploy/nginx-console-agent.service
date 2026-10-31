@@ -6,6 +6,14 @@
 # Agent 只主动出站连接主服务器，不需要开放任何入站端口。
 # Agent 需要写 Nginx 配置目录与自己的配置目录，因此以专用用户运行，
 # 并通过 ReadWritePaths 精确授权。
+#
+# 注意：本单元默认配合 `--use-sudo`（见 README 5.2）使用。以下加固项与 sudo
+# 存在冲突，已在对应位置注明原因，请勿直接改回：
+#   · NoNewPrivileges 必须为 false      —— 否则 sudo 无法提权
+#   · CapabilityBoundingSet 不能设为空  —— 否则 sudo 无法 setuid/setgid 到 root
+#   · MemoryDenyWriteExecute 必须为 false —— 否则 Node/V8 直接崩溃
+#   · ReadWritePaths 需包含 Nginx 的 pid 与日志目录
+# 若你的 Agent 完全不需要 sudo，可把 NoNewPrivileges 改回 true。
 
 [Unit]
 Description=Nginx Console Agent
@@ -16,6 +24,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=nginx-console-agent
+# 必须与被管理 Nginx 配置目录的属组一致：
+# Debian/Ubuntu 为 www-data，RHEL/CentOS/Fedora 通常为 nginx。按实际调整。
 Group=nginx
 WorkingDirectory=/opt/nginx-console
 EnvironmentFile=/etc/nginx-console/agent.env
@@ -24,7 +34,11 @@ Restart=always
 RestartSec=5
 
 # 权限与沙箱
-NoNewPrivileges=true
+#
+# NoNewPrivileges=true 会设置 no_new_privs,使 sudo 无法获得特权，
+# 表现为：`sudo: The "no new privileges" flag is set, which prevents sudo from
+# running as root`。使用 --use-sudo 时必须为 false。
+NoNewPrivileges=false
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
@@ -37,16 +51,26 @@ ProtectHostname=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
+# V8 的 JIT 需要同时可写且可执行的内存页。设为 true 时 Node 会在启动或
+# 首次触发优化编译时崩溃：`# Fatal error in , line 0` /
+# `# Check failed: 12 == (*__errno_location ())`，进程以 SIGTRAP 退出。
+MemoryDenyWriteExecute=false
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-CapabilityBoundingSet=
+# CapabilityBoundingSet 留空会清空能力集，sudo 切换用户时因缺少
+# CAP_SETUID/CAP_SETGID 失败：`sudo: unable to change to root gid:
+# Operation not permitted`。因此保持默认（注释掉）或显式包含这两个能力。
+# CapabilityBoundingSet=
 UMask=0077
 
 # 精确授权可写路径：
 # - Agent 配置、私钥、状态目录
 # - 被管理的 Nginx 工作目录（示例为 /etc/nginx；按实际调整）
-ReadWritePaths=/etc/nginx-console /etc/nginx
+# - Nginx 的 pid 文件与日志目录：`nginx -t` 会真实打开 pid 与 error_log 并写入，
+#   ProtectSystem=strict 下未授权的路径为只读挂载，检测会失败：
+#   `open() "/run/nginx.pid" failed (30: Read-only file system)`。
+#   路径请与本机 nginx.conf 中的 pid / error_log 指令保持一致。
+ReadWritePaths=/etc/nginx-console /etc/nginx /run /var/log/nginx
 
 StandardOutput=journal
 StandardError=journal
