@@ -707,7 +707,9 @@ export class NginxEngine {
       });
 
       const candidates = [];
-      const bundle = files.find((file) => file.toLowerCase().endsWith('_bundle.crt'));
+      const bundle =
+        files.find((file) => /_bundle\.crt$/i.test(file)) ||
+        files.find((file) => /_bundle\.(cer|pem)$/i.test(file));
       if (bundle) candidates.push(bundle);
       for (const preferred of ['fullchain.pem', 'cert.pem', 'server.crt', 'server.pem']) {
         const actual = byLower.get(preferred);
@@ -961,8 +963,8 @@ export class NginxEngine {
       const base = targetName.replace(/\.(crt|cer|pem)$/i, '');
       const siblings = [`${base}.chain.pem`];
       if (includeKey) {
-        if (/_bundle\.crt$/i.test(targetName)) {
-          siblings.push(targetName.replace(/_bundle\.crt$/i, '.key'));
+        if (/_bundle\.(crt|cer|pem)$/i.test(targetName)) {
+          siblings.push(targetName.replace(/_bundle\.(crt|cer|pem)$/i, '.key'));
         } else if (['fullchain.pem', 'cert.pem', 'server.crt', 'server.pem'].includes(targetLower)) {
           siblings.push('privkey.pem', 'private.pem', 'key.pem');
         } else {

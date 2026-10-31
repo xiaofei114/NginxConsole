@@ -18,7 +18,7 @@ const serverMeta = ref(null);
 const info = ref(null);
 const loading = ref(true);
 const infoError = ref('');
-const tab = ref('config');
+const tab = ref(route.query.tab === 'certs' ? 'certs' : 'config');
 const workspaceOpen = ref(false);
 const refreshing = ref(false);
 

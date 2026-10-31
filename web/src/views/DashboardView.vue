@@ -5,7 +5,7 @@ import AppIcon from '../components/AppIcon.vue';
 import ServerCard from '../components/ServerCard.vue';
 import ModalDialog from '../components/ModalDialog.vue';
 import { api, ApiError } from '../lib/api.js';
-import { copyText, formatTime, shortFingerprint } from '../lib/format.js';
+import { copyText, formatTime, shortFingerprint, timeAgo } from '../lib/format.js';
 import { toast } from '../lib/toast.js';
 
 const router = useRouter();
@@ -15,6 +15,10 @@ const loading = ref(true);
 const refreshing = ref(false);
 const error = ref('');
 let refreshTimer = null;
+
+const certOverview = ref(null);
+const certLoading = ref(true);
+const certError = ref('');
 
 const createOpen = ref(false);
 const createName = ref('');
@@ -80,19 +84,59 @@ async function load({ silent = false } = {}) {
   }
 }
 
+async function loadCertificates({ force = false } = {}) {
+  if (!certOverview.value) certLoading.value = true;
+  try {
+    const data = await api.get(`/certificates/overview${force ? '?force=1' : ''}`);
+    certOverview.value = data;
+    certError.value = '';
+  } catch (caught) {
+    certError.value = caught.message || '证书信息获取失败';
+  } finally {
+    certLoading.value = false;
+  }
+}
+
+function refreshAll() {
+  load({ silent: true });
+  loadCertificates({ force: true });
+}
+
+function certFileName(cert) {
+  const parts = String(cert.file || '').split('/');
+  return parts[parts.length - 1] || cert.file;
+}
+
+function daysLabel(cert) {
+  const days = Math.abs(Number(cert.daysRemaining) || 0);
+  if (cert.expired) return days > 0 ? `已过期 ${days} 天` : '已过期';
+  return days === 0 ? '今天到期' : `剩余 ${days} 天`;
+}
+
+function openServerCert(serverId) {
+  router.push({ name: 'server', params: { serverId }, query: { tab: 'certs' } });
+}
+
 function scheduleRefresh() {
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
-    if (document.visibilityState === 'visible') load({ silent: true });
+    if (document.visibilityState === 'visible') {
+      load({ silent: true });
+      loadCertificates();
+    }
   }, 20000);
 }
 
 function onVisibility() {
-  if (document.visibilityState === 'visible') load({ silent: true });
+  if (document.visibilityState === 'visible') {
+    load({ silent: true });
+    loadCertificates();
+  }
 }
 
 onMounted(() => {
   load();
+  loadCertificates();
   scheduleRefresh();
   document.addEventListener('visibilitychange', onVisibility);
 });
@@ -170,7 +214,7 @@ async function copy(value, label = '内容') {
         <p class="page-sub">集中查看主服务器与子服务器状态，进入节点管理配置、证书与进程。</p>
       </div>
       <div class="head-actions">
-        <button class="btn" type="button" :disabled="refreshing" @click="load({ silent: true })">
+        <button class="btn" type="button" :disabled="refreshing" @click="refreshAll">
           <span v-if="refreshing" class="spinner" />
           <AppIcon v-else name="refresh" :size="14" />
           {{ refreshing ? '刷新中…' : '刷新' }}
@@ -210,6 +254,85 @@ async function copy(value, label = '内容') {
         <strong class="stat-value danger">{{ stats.offline }}</strong>
         <span class="stat-note">Agent 会指数退避重连</span>
       </div>
+    </section>
+
+    <section class="cert-alerts">
+      <div class="section-head">
+        <div class="section-title">
+          <h2>证书到期提醒</h2>
+          <span v-if="certOverview" class="badge">{{ certOverview.count }}</span>
+        </div>
+        <span v-if="certOverview" class="small muted">
+          更新于 {{ timeAgo(certOverview.generatedAt) }}<template v-if="certOverview.cached"> · 缓存</template>
+        </span>
+        <span v-else-if="certLoading" class="small muted">正在汇总…</span>
+      </div>
+
+      <div v-if="certError" class="alert alert-danger">
+        <AppIcon name="alert" :size="15" />
+        <div>{{ certError }}</div>
+      </div>
+
+      <div v-if="certLoading && !certOverview" class="loading-row">
+        <span class="spinner" />
+        正在汇总各节点证书…
+      </div>
+
+      <template v-else-if="certOverview">
+        <div v-if="!certOverview.expired.length && !certOverview.expiresSoon.length" class="cert-ok card">
+          <AppIcon name="check" :size="16" />
+          <span>共 {{ certOverview.count }} 张证书，30 天内没有到期证书。</span>
+        </div>
+        <div v-else class="cert-alert-grid">
+          <div v-if="certOverview.expired.length" class="card cert-alert-card danger">
+            <div class="cert-alert-head">
+              <AppIcon name="alert" :size="14" />
+              <strong>已过期</strong>
+              <span class="badge badge-danger">{{ certOverview.expired.length }}</span>
+            </div>
+            <ul class="cert-rows">
+              <li v-for="cert in certOverview.expired" :key="`${cert.serverId}:${cert.file}`">
+                <div class="cert-main">
+                  <button class="cert-name" type="button" :title="cert.file" @click="openServerCert(cert.serverId)">
+                    {{ certFileName(cert) }}
+                  </button>
+                  <span class="cert-sub">{{ cert.serverName }} · 到期 {{ formatTime(cert.validTo) }}</span>
+                </div>
+                <span class="badge badge-danger">{{ daysLabel(cert) }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="certOverview.expiresSoon.length" class="card cert-alert-card warn">
+            <div class="cert-alert-head">
+              <AppIcon name="history" :size="14" />
+              <strong>即将到期（{{ certOverview.thresholdDays }} 天内）</strong>
+              <span class="badge badge-warn">{{ certOverview.expiresSoon.length }}</span>
+            </div>
+            <ul class="cert-rows">
+              <li v-for="cert in certOverview.expiresSoon" :key="`${cert.serverId}:${cert.file}`">
+                <div class="cert-main">
+                  <button class="cert-name" type="button" :title="cert.file" @click="openServerCert(cert.serverId)">
+                    {{ certFileName(cert) }}
+                  </button>
+                  <span class="cert-sub">{{ cert.serverName }} · 到期 {{ formatTime(cert.validTo) }}</span>
+                </div>
+                <span class="badge badge-warn">{{ daysLabel(cert) }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <p v-if="certOverview.errors.length || certOverview.skipped.length" class="cert-note small muted">
+          <template v-if="certOverview.errors.length">
+            获取失败：{{ certOverview.errors.map((item) => `${item.serverName}（${item.error}）`).join('、') }}
+          </template>
+          <template v-if="certOverview.errors.length && certOverview.skipped.length">；</template>
+          <template v-if="certOverview.skipped.length">
+            未包含：{{ certOverview.skipped.map((item) => `${item.serverName}（${item.reason}）`).join('、') }}
+          </template>
+        </p>
+      </template>
     </section>
 
     <section class="security-strip">
@@ -395,6 +518,47 @@ async function copy(value, label = '内容') {
 .stat-value.warn { color: var(--warn-text); }
 .stat-value.danger { color: var(--danger-text); }
 .stat-note { color: var(--text-faint); font-size: 10.5px; }
+.cert-alerts { margin-top: 18px; }
+.cert-alert-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.cert-alert-card { padding: 0; overflow: hidden; }
+.cert-alert-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.cert-alert-card.danger .cert-alert-head { color: var(--danger-text); background: var(--danger-soft); }
+.cert-alert-card.warn .cert-alert-head { color: var(--warn-text); background: var(--warn-soft); }
+.cert-rows { list-style: none; margin: 0; padding: 0; max-height: 268px; overflow: auto; }
+.cert-rows li { display: flex; align-items: center; gap: 10px; padding: 9px 13px; }
+.cert-rows li + li { border-top: 1px solid var(--border); }
+.cert-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cert-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cert-name:hover { color: var(--accent-bright); text-decoration: underline; }
+.cert-sub { color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cert-ok {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px;
+  color: var(--ok-text);
+  font-size: 12px;
+}
+.cert-note { margin-top: 8px; line-height: 1.6; }
 .security-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -487,6 +651,7 @@ async function copy(value, label = '内容') {
 
 @media (max-width: 1180px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cert-alert-grid { grid-template-columns: 1fr; }
   .security-strip { grid-template-columns: 1fr; }
   .security-item + .security-item { border-left: 0; border-top: 1px solid var(--border); }
 }

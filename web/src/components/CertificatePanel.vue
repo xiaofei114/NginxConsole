@@ -286,8 +286,16 @@ async function submitUpload() {
 const deleteMessage = computed(() => {
   const cert = deleteTarget.value;
   if (!cert) return '';
-  const keyPart = cert.keyPresent ? '，以及同目录的配套私钥文件' : '（同目录的配套私钥 / 链文件若存在会一并删除）';
-  return `将删除 ${cert.file}${keyPart}。\n删除前会自动备份并执行 nginx -t；若证书仍被某个站点配置引用，检测失败会自动恢复。`;
+  const keyNote = cert.keyPresent
+    ? '同目录的配套私钥会一并删除。'
+    : '同目录的配套私钥 / 链文件若存在，也会一并删除。';
+  return [
+    '将删除文件：',
+    cert.file,
+    '',
+    keyNote,
+    '删除前会自动备份并执行 nginx -t；若证书仍被某个站点配置引用，检测失败会自动恢复。',
+  ].join('\n');
 });
 
 function requestDelete(cert) {

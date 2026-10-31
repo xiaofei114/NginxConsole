@@ -71,6 +71,7 @@ export class ServerManager {
     this.enrollmentTokenMinutes = enrollmentTokenMinutes;
     this.logger = logger;
     this.localInfoCache = null;
+    this.certOverviewCache = null;
   }
 
   list() {
@@ -141,14 +142,81 @@ export class ServerManager {
     if (typeof command !== 'string' || command.length === 0 || command.length > 64) {
       throw new NcsError('INVALID_COMMAND', '命令无效', 400);
     }
+    let result;
     if (serverId === 'local') {
-      return this.localEngine.execute(command, payload);
+      result = await this.localEngine.execute(command, payload);
+    } else {
+      const agent = this.getAgentRecord(serverId);
+      if (agent.status !== 'active') throw new NcsError('AGENT_NOT_ACTIVE', 'Agent 尚未激活或已撤销', 409);
+      result = await this.hub.request(serverId, command, payload, {
+        timeoutMs: timeoutMs || REMOTE_TIMEOUTS[command] || 30000,
+      });
     }
-    const agent = this.getAgentRecord(serverId);
-    if (agent.status !== 'active') throw new NcsError('AGENT_NOT_ACTIVE', 'Agent 尚未激活或已撤销', 409);
-    return this.hub.request(serverId, command, payload, {
-      timeoutMs: timeoutMs || REMOTE_TIMEOUTS[command] || 30000,
-    });
+    if (command.startsWith('cert.') || command === 'workspace.set') this.certOverviewCache = null;
+    return result;
+  }
+
+  /**
+   * Aggregate certificate expiry across every reachable node so the dashboard
+   * can show what needs renewal without opening each server. Results are cached
+   * briefly because every online Agent costs one round trip.
+   */
+  async certificateOverview({ force = false } = {}) {
+    const ttl = 5 * 60 * 1000;
+    if (!force && this.certOverviewCache && Date.now() - this.certOverviewCache.at < ttl) {
+      return { ...this.certOverviewCache.data, cached: true };
+    }
+    const { servers } = this.list();
+    const reachable = servers.filter((server) => server.kind === 'local' || (server.status === 'active' && server.online));
+    const results = await Promise.all(reachable.map(async (server) => {
+      try {
+        return { server, listing: await this.execute(server.id, 'cert.list') };
+      } catch (error) {
+        return { server, error: error instanceof NcsError ? error.message : '获取证书列表失败' };
+      }
+    }));
+
+    const certificates = [];
+    const errors = [];
+    for (const result of results) {
+      if (result.error) {
+        errors.push({ serverId: result.server.id, serverName: result.server.name, error: result.error });
+        continue;
+      }
+      for (const cert of result.listing?.certificates || []) {
+        certificates.push({
+          serverId: result.server.id,
+          serverName: result.server.name,
+          serverKind: result.server.kind,
+          file: cert.file,
+          name: cert.name,
+          subject: cert.subject,
+          validFrom: cert.validFrom,
+          validTo: cert.validTo,
+          daysRemaining: cert.daysRemaining,
+          expired: Boolean(cert.expired),
+        });
+      }
+    }
+    certificates.sort((a, b) => String(a.validTo).localeCompare(String(b.validTo)));
+
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      thresholdDays: 30,
+      count: certificates.length,
+      expired: certificates.filter((cert) => cert.expired),
+      expiresSoon: certificates.filter((cert) => !cert.expired && Number(cert.daysRemaining) <= 30),
+      errors,
+      skipped: servers
+        .filter((server) => server.kind === 'agent' && !(server.status === 'active' && server.online))
+        .map((server) => ({
+          serverId: server.id,
+          serverName: server.name,
+          reason: server.status === 'active' ? 'Agent 离线' : '尚未注册或已撤销',
+        })),
+    };
+    this.certOverviewCache = { at: Date.now(), data: payload };
+    return { ...payload, cached: false };
   }
 
   async createAgent(name) {

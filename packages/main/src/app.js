@@ -503,6 +503,10 @@ export async function createApp(config, { logger } = {}) {
     sendOk(res, data);
   }));
 
+  api.get('/certificates/overview', route(async (req, res) => {
+    sendOk(res, await manager.certificateOverview({ force: req.query.force === '1' }));
+  }));
+
   api.get('/servers/:serverId/certs', route(async (req, res) => {
     const { serverId } = req.params;
     sendOk(res, await manager.execute(serverId, 'cert.list'));
